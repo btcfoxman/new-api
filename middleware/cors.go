@@ -47,7 +47,17 @@ func CORS() gin.HandlerFunc {
 	config := cors.DefaultConfig()
 	config.AllowCredentials = true
 	config.AllowMethods = []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"}
-	config.AllowHeaders = []string{"Origin", "Content-Type", "Accept", "Authorization", "New-API-User", "X-Requested-With"}
+	config.AllowHeaders = []string{
+		"Origin",
+		"Content-Type",
+		"Accept",
+		"Authorization",
+		"New-API-User",
+		"X-Requested-With",
+		"Cache-Control",
+		"Pragma",
+		"Expires",
+	}
 	allowedOrigins := buildAllowedOrigins()
 	config.AllowOriginFunc = func(origin string) bool {
 		// Non-browser/server-to-server requests may not carry Origin.
