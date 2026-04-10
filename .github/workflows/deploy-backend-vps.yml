@@ -14,10 +14,6 @@ jobs:
   build_and_push:
     environment: Guangzhou
     runs-on: ubuntu-latest
-    outputs:
-      deploy_image: ${{ steps.tags.outputs.deploy_image }}
-      push_acr: ${{ steps.tags.outputs.push_acr }}
-      push_tcr: ${{ steps.tags.outputs.push_tcr }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -164,19 +160,77 @@ jobs:
     needs: build_and_push
     runs-on: ubuntu-latest
     steps:
+      - name: Compute deploy image
+        id: deploy_meta
+        env:
+          SHA_TAG: ${{ github.sha }}
+          GH_OWNER: ${{ github.repository_owner }}
+          REGISTRY_TARGET_SECRET: ${{ secrets.REGISTRY_TARGET }}
+          ACR_REGISTRY: ${{ secrets.ACR_REGISTRY }}
+          ACR_NAMESPACE: ${{ secrets.ACR_NAMESPACE }}
+          ACR_REPOSITORY: ${{ secrets.ACR_REPOSITORY }}
+          TCR_REGISTRY: ${{ secrets.TCR_REGISTRY }}
+          TCR_NAMESPACE: ${{ secrets.TCR_NAMESPACE }}
+          TCR_REPOSITORY: ${{ secrets.TCR_REPOSITORY }}
+        run: |
+          set -euo pipefail
+          short_sha="${SHA_TAG:0:12}"
+          target_raw="${REGISTRY_TARGET_SECRET:-ghcr}"
+          target="$(echo "${target_raw}" | tr '[:upper:]' '[:lower:]')"
+          ghcr_image="ghcr.io/${GH_OWNER}/new-api:${short_sha}"
+          acr_image="${ACR_REGISTRY}/${ACR_NAMESPACE}/${ACR_REPOSITORY}:${short_sha}"
+          tcr_image="${TCR_REGISTRY}/${TCR_NAMESPACE}/${TCR_REPOSITORY}:${short_sha}"
+          deploy_image="${ghcr_image}"
+          push_acr="false"
+          push_tcr="false"
+
+          case "${target}" in
+            ghcr|"")
+              deploy_image="${ghcr_image}"
+              ;;
+            acr)
+              deploy_image="${acr_image}"
+              push_acr="true"
+              ;;
+            tcr)
+              deploy_image="${tcr_image}"
+              push_tcr="true"
+              ;;
+            all)
+              deploy_image="${ghcr_image}"
+              if [ -n "${ACR_REGISTRY}" ] && [ -n "${ACR_NAMESPACE}" ] && [ -n "${ACR_REPOSITORY}" ]; then
+                push_acr="true"
+              fi
+              if [ -n "${TCR_REGISTRY}" ] && [ -n "${TCR_NAMESPACE}" ] && [ -n "${TCR_REPOSITORY}" ]; then
+                push_tcr="true"
+              fi
+              ;;
+            *)
+              echo "Unsupported REGISTRY_TARGET=${target}. Use ghcr|acr|tcr|all." >&2
+              exit 1
+              ;;
+          esac
+
+          echo "deploy_image=${deploy_image}" >> "$GITHUB_OUTPUT"
+          echo "push_acr=${push_acr}" >> "$GITHUB_OUTPUT"
+          echo "push_tcr=${push_tcr}" >> "$GITHUB_OUTPUT"
+
       - name: Validate deploy image input
         run: |
-          if [ -z "${{ needs.build_and_push.outputs.deploy_image }}" ]; then
-            echo "build_and_push.outputs.deploy_image is empty" >&2
+          if [ -z "${{ steps.deploy_meta.outputs.deploy_image }}" ]; then
+            echo "steps.deploy_meta.outputs.deploy_image is empty" >&2
             exit 1
           fi
+          echo "deploy_image=${{ steps.deploy_meta.outputs.deploy_image }}"
+          echo "push_acr=${{ steps.deploy_meta.outputs.push_acr }}"
+          echo "push_tcr=${{ steps.deploy_meta.outputs.push_tcr }}"
 
       - name: Deploy on VPS via SSH
         uses: appleboy/ssh-action@v1.0.3
         env:
-          DEPLOY_IMAGE: ${{ needs.build_and_push.outputs.deploy_image }}
-          PUSH_ACR: ${{ needs.build_and_push.outputs.push_acr }}
-          PUSH_TCR: ${{ needs.build_and_push.outputs.push_tcr }}
+          DEPLOY_IMAGE: ${{ steps.deploy_meta.outputs.deploy_image }}
+          PUSH_ACR: ${{ steps.deploy_meta.outputs.push_acr }}
+          PUSH_TCR: ${{ steps.deploy_meta.outputs.push_tcr }}
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
