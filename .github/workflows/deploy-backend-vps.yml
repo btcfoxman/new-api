@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-and-push:
+  build_and_push:
     environment: Guangzhou
     runs-on: ubuntu-latest
     outputs:
@@ -159,17 +159,24 @@ jobs:
           push: true
           tags: ${{ steps.tags.outputs.all_tags }}
 
-  deploy-vps:
+  deploy_vps:
     environment: Guangzhou
-    needs: build-and-push
+    needs: build_and_push
     runs-on: ubuntu-latest
     steps:
+      - name: Validate deploy image input
+        run: |
+          if [ -z "${{ needs.build_and_push.outputs.deploy_image }}" ]; then
+            echo "build_and_push.outputs.deploy_image is empty" >&2
+            exit 1
+          fi
+
       - name: Deploy on VPS via SSH
         uses: appleboy/ssh-action@v1.0.3
         env:
-          DEPLOY_IMAGE: ${{ needs.build-and-push.outputs.deploy_image }}
-          PUSH_ACR: ${{ needs.build-and-push.outputs.push_acr }}
-          PUSH_TCR: ${{ needs.build-and-push.outputs.push_tcr }}
+          DEPLOY_IMAGE: ${{ needs.build_and_push.outputs.deploy_image }}
+          PUSH_ACR: ${{ needs.build_and_push.outputs.push_acr }}
+          PUSH_TCR: ${{ needs.build_and_push.outputs.push_tcr }}
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
