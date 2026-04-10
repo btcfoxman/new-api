@@ -40,13 +40,57 @@ const ModelPricingTable = ({
     ? modelData.enable_groups
     : [];
   const autoChain = autoGroups.filter((g) => modelEnableGroups.includes(g));
+
+  const inferGroupBillingMode = (record, groupName) => {
+    if (!record) return 'unknown';
+    if (record.quota_type === 0) return 'per_token';
+    if (record.quota_type !== 1) return 'unknown';
+
+    const desc = String(record.description || '');
+    const marker = '计费来源：';
+    const idx = desc.indexOf(marker);
+    if (idx < 0) return 'per_call';
+
+    const sourceText = desc.slice(idx + marker.length);
+    const parts = sourceText
+      .split('；')
+      .map((x) => x.trim())
+      .filter(Boolean);
+    const hit = parts.find((p) => p.startsWith(`${groupName}=`));
+    if (!hit) return 'per_call';
+    if (hit.includes('按秒')) return 'per_second';
+    if (hit.includes('固定按次') || hit.includes('按次')) return 'per_call';
+    return 'per_call';
+  };
+
+  const billingModeLabel = (mode) => {
+    if (mode === 'per_token') return t('按量计费');
+    if (mode === 'per_second') return t('按秒计费');
+    if (mode === 'per_call') return t('按次计费');
+    return '-';
+  };
+
+  const billingModeColor = (mode) => {
+    if (mode === 'per_token') return 'violet';
+    if (mode === 'per_second') return 'cyan';
+    if (mode === 'per_call') return 'teal';
+    return 'white';
+  };
+
   const renderGroupPriceTable = () => {
     // 仅展示模型可用的分组：模型 enable_groups 与用户可用分组的交集
 
     const availableGroups = Object.keys(usableGroup || {})
       .filter((g) => g !== '')
       .filter((g) => g !== 'auto')
-      .filter((g) => modelEnableGroups.includes(g));
+      .filter((g) => modelEnableGroups.includes(g))
+      .sort((a, b) => {
+        const rank = { default: 0, stable: 1, official: 2 };
+        const ra = rank[a] ?? 99;
+        const rb = rank[b] ?? 99;
+        if (ra !== rb) return ra - rb;
+        return a.localeCompare(b);
+      });
 
     // 准备表格数据
     const tableData = availableGroups.map((group) => {
@@ -61,6 +105,13 @@ const ModelPricingTable = ({
             quotaDisplayType: siteDisplayType,
           })
         : { inputPrice: '-', outputPrice: '-', price: '-' };
+      const billingMode = inferGroupBillingMode(modelData, group);
+      let priceItems = getModelPriceItems(priceData, t, siteDisplayType);
+      if (billingMode === 'per_second' && modelData?.quota_type === 1) {
+        priceItems = priceItems.map((item) =>
+          item.key === 'fixed' ? { ...item, suffix: ` / ${t('秒')}` } : item,
+        );
+      }
 
       // 获取分组倍率
       const groupRatioValue =
@@ -70,13 +121,9 @@ const ModelPricingTable = ({
         key: group,
         group: group,
         ratio: groupRatioValue,
-        billingType:
-          modelData?.quota_type === 0
-            ? t('按量计费')
-            : modelData?.quota_type === 1
-              ? t('按次计费')
-              : '-',
-        priceItems: getModelPriceItems(priceData, t, siteDisplayType),
+        billingMode,
+        billingType: billingModeLabel(billingMode),
+        priceItems,
       };
     });
 
@@ -111,10 +158,8 @@ const ModelPricingTable = ({
     columns.push({
       title: t('计费类型'),
       dataIndex: 'billingType',
-      render: (text) => {
-        let color = 'white';
-        if (text === t('按量计费')) color = 'violet';
-        else if (text === t('按次计费')) color = 'teal';
+      render: (text, record) => {
+        const color = billingModeColor(record?.billingMode);
         return (
           <Tag color={color} size='small' shape='circle'>
             {text || '-'}

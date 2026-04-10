@@ -475,6 +475,8 @@ func updateOptionMap(key string, value string) (err error) {
 		err = ratio_setting.UpdateCompletionRatioByJSONString(value)
 	case "ModelPrice":
 		err = ratio_setting.UpdateModelPriceByJSONString(value)
+	case "ModelPriceByGroup":
+		err = ratio_setting.UpdateModelPriceByGroupByJSONString(value)
 	case "CacheRatio":
 		err = ratio_setting.UpdateCacheRatioByJSONString(value)
 	case "CreateCacheRatio":

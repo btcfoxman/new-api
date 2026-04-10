@@ -323,6 +323,7 @@ var defaultAudioCompletionRatio = map[string]float64{
 }
 
 var modelPriceMap = types.NewRWMap[string, float64]()
+var modelPriceByGroupMap = types.NewRWMap[string, map[string]float64]()
 var modelRatioMap = types.NewRWMap[string, float64]()
 var completionRatioMap = types.NewRWMap[string, float64]()
 
@@ -349,12 +350,20 @@ func GetModelPriceMap() map[string]float64 {
 	return modelPriceMap.ReadAll()
 }
 
+func GetModelPriceByGroupMap() map[string]map[string]float64 {
+	return modelPriceByGroupMap.ReadAll()
+}
+
 func ModelPrice2JSONString() string {
 	return modelPriceMap.MarshalJSONString()
 }
 
 func UpdateModelPriceByJSONString(jsonStr string) error {
 	return types.LoadFromJsonStringWithCallback(modelPriceMap, jsonStr, InvalidateExposedDataCache)
+}
+
+func UpdateModelPriceByGroupByJSONString(jsonStr string) error {
+	return types.LoadFromJsonStringWithCallback(modelPriceByGroupMap, jsonStr, InvalidateExposedDataCache)
 }
 
 // GetModelPrice 返回模型的价格，如果模型不存在则返回-1，false
@@ -380,6 +389,53 @@ func GetModelPrice(name string, printErr bool) (float64, bool) {
 		common.SysError("model price not found: " + name)
 	}
 	return -1, false
+}
+
+func GetModelPriceByGroup(name string, group string, printErr bool) (float64, bool) {
+	name = FormatMatchingModelName(name)
+	group = strings.TrimSpace(strings.ToLower(group))
+	if group == "" {
+		return -1, false
+	}
+
+	groupMap, ok := modelPriceByGroupMap.Get(name)
+	if ok {
+		if price, exists := groupMap[group]; exists {
+			return price, true
+		}
+	}
+
+	if strings.HasSuffix(name, CompactModelSuffix) {
+		groupMap, ok = modelPriceByGroupMap.Get(CompactWildcardModelKey)
+		if ok {
+			if price, exists := groupMap[group]; exists {
+				return price, true
+			}
+		}
+	}
+
+	if printErr {
+		common.SysError("model group price not found: " + name + " group=" + group)
+	}
+	return -1, false
+}
+
+func GetModelPriceGroupMapForModel(name string) map[string]float64 {
+	name = FormatMatchingModelName(name)
+	groupMap, ok := modelPriceByGroupMap.Get(name)
+	if !ok {
+		if strings.HasSuffix(name, CompactModelSuffix) {
+			groupMap, ok = modelPriceByGroupMap.Get(CompactWildcardModelKey)
+		}
+	}
+	if !ok || groupMap == nil {
+		return map[string]float64{}
+	}
+	copied := make(map[string]float64, len(groupMap))
+	for k, v := range groupMap {
+		copied[k] = v
+	}
+	return copied
 }
 
 func UpdateModelRatioByJSONString(jsonStr string) error {
@@ -694,6 +750,10 @@ func GetModelRatioCopy() map[string]float64 {
 
 func GetModelPriceCopy() map[string]float64 {
 	return modelPriceMap.ReadAll()
+}
+
+func GetModelPriceByGroupCopy() map[string]map[string]float64 {
+	return modelPriceByGroupMap.ReadAll()
 }
 
 func GetCompletionRatioCopy() map[string]float64 {

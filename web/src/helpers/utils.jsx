@@ -618,6 +618,17 @@ export const calculateModelPrice = ({
   quotaDisplayType = 'USD',
   precision = 4,
 }) => {
+  const pickGroupModelBasePrice = (record, groupName) => {
+    const groupMap = record?.group_model_price;
+    if (!groupMap || typeof groupMap !== 'object') return null;
+    const direct = groupMap[groupName];
+    if (direct !== undefined && direct !== null && direct !== '') {
+      const num = Number(direct);
+      return Number.isFinite(num) ? num : null;
+    }
+    return null;
+  };
+
   // 1. 选择实际使用的分组
   let usedGroup = selectedGroup;
   let usedGroupRatio = groupRatio[selectedGroup];
@@ -739,7 +750,12 @@ export const calculateModelPrice = ({
 
   if (record.quota_type === 1) {
     // 按次计费
-    const priceUSD = parseFloat(record.model_price) * usedGroupRatio;
+    const groupBasePrice = pickGroupModelBasePrice(record, usedGroup);
+    const basePrice =
+      groupBasePrice !== null && Number.isFinite(groupBasePrice)
+        ? groupBasePrice
+        : parseFloat(record.model_price);
+    const priceUSD = basePrice * usedGroupRatio;
     const displayVal = displayPrice(priceUSD);
 
     return {
