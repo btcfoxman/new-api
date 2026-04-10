@@ -4,7 +4,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-
 	"github.com/gin-gonic/gin"
 )
 
