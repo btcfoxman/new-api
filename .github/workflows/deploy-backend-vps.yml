@@ -12,6 +12,7 @@ on:
 
 jobs:
   build-and-push:
+    environment: Guangzhou
     runs-on: ubuntu-latest
     outputs:
       deploy_image: ${{ steps.tags.outputs.deploy_image }}
@@ -143,6 +144,7 @@ jobs:
           tags: ${{ steps.tags.outputs.all_tags }}
 
   deploy-vps:
+    environment: Guangzhou
     needs: build-and-push
     runs-on: ubuntu-latest
     steps:
