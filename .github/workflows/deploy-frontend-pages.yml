@@ -4,8 +4,8 @@ on:
   push:
     branches: [ "main" ]
     paths:
-      - "new-api/web/**"
-      - "new-api/.github/workflows/deploy-frontend-pages.yml"
+      - "**/web/**"
+      - "**/deploy-frontend-pages.yml"
   workflow_dispatch:
 
 jobs:
@@ -15,15 +15,26 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Detect web directory
+        run: |
+          if [ -d "new-api/web" ]; then
+            echo "WEB_DIR=new-api/web" >> "$GITHUB_ENV"
+          elif [ -d "web" ]; then
+            echo "WEB_DIR=web" >> "$GITHUB_ENV"
+          else
+            echo "Cannot find web directory (expected web/ or new-api/web/)." >&2
+            exit 1
+          fi
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: "20"
           cache: "npm"
-          cache-dependency-path: new-api/web/package-lock.json
+          cache-dependency-path: ${{ env.WEB_DIR }}/package-lock.json
 
       - name: Install and Build Web
-        working-directory: ./new-api/web
+        working-directory: ./${{ env.WEB_DIR }}
         env:
           VITE_REACT_APP_SERVER_URL: ${{ secrets.PUBLIC_API_BASE_URL }}
         run: |
@@ -36,5 +47,5 @@ jobs:
           apiToken: ${{ secrets.CF_API_TOKEN }}
           accountId: ${{ secrets.CF_ACCOUNT_ID }}
           projectName: ${{ secrets.CF_PAGES_PROJECT }}
-          directory: ./new-api/web/dist
+          directory: ./${{ env.WEB_DIR }}/dist
           gitHubToken: ${{ secrets.GITHUB_TOKEN }}
