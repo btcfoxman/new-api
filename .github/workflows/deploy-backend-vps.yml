@@ -1,0 +1,175 @@
+name: Build Image And Deploy Backend
+
+on:
+  push:
+    branches: [ "main" ]
+    paths-ignore:
+      - "web/**"
+      - "new-api-docs/**"
+      - "**/*.md"
+      - ".github/workflows/deploy-frontend-pages.yml"
+  workflow_dispatch:
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    outputs:
+      deploy_image: ${{ steps.tags.outputs.deploy_image }}
+      push_acr: ${{ steps.tags.outputs.push_acr }}
+      push_tcr: ${{ steps.tags.outputs.push_tcr }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set image tags
+        id: tags
+        env:
+          SHA_TAG: ${{ github.sha }}
+          GH_OWNER: ${{ github.repository_owner }}
+          ACR_REGISTRY: ${{ secrets.ACR_REGISTRY }}
+          ACR_NAMESPACE: ${{ secrets.ACR_NAMESPACE }}
+          ACR_REPOSITORY: ${{ secrets.ACR_REPOSITORY }}
+          TCR_REGISTRY: ${{ secrets.TCR_REGISTRY }}
+          TCR_NAMESPACE: ${{ secrets.TCR_NAMESPACE }}
+          TCR_REPOSITORY: ${{ secrets.TCR_REPOSITORY }}
+          REGISTRY_TARGET: ${{ vars.REGISTRY_TARGET }}
+        run: |
+          set -euo pipefail
+          target="$(echo "${REGISTRY_TARGET:-ghcr}" | tr '[:upper:]' '[:lower:]')"
+          short_sha="${SHA_TAG:0:12}"
+          tags=()
+          push_ghcr="false"
+          push_acr="false"
+          push_tcr="false"
+
+          ghcr_image="ghcr.io/${GH_OWNER}/new-api:${short_sha}"
+          acr_image="${ACR_REGISTRY}/${ACR_NAMESPACE}/${ACR_REPOSITORY}:${short_sha}"
+          tcr_image="${TCR_REGISTRY}/${TCR_NAMESPACE}/${TCR_REPOSITORY}:${short_sha}"
+          deploy_image="${ghcr_image}"
+
+          case "${target}" in
+            ghcr|"")
+              push_ghcr="true"
+              tags+=("${ghcr_image}")
+              deploy_image="${ghcr_image}"
+              ;;
+            acr)
+              if [ -z "${ACR_REGISTRY}" ] || [ -z "${ACR_NAMESPACE}" ] || [ -z "${ACR_REPOSITORY}" ]; then
+                echo "REGISTRY_TARGET=acr but ACR_* is incomplete" >&2
+                exit 1
+              fi
+              push_acr="true"
+              tags+=("${acr_image}")
+              deploy_image="${acr_image}"
+              ;;
+            tcr)
+              if [ -z "${TCR_REGISTRY}" ] || [ -z "${TCR_NAMESPACE}" ] || [ -z "${TCR_REPOSITORY}" ]; then
+                echo "REGISTRY_TARGET=tcr but TCR_* is incomplete" >&2
+                exit 1
+              fi
+              push_tcr="true"
+              tags+=("${tcr_image}")
+              deploy_image="${tcr_image}"
+              ;;
+            all)
+              push_ghcr="true"
+              tags+=("${ghcr_image}")
+              if [ -n "${ACR_REGISTRY}" ] && [ -n "${ACR_NAMESPACE}" ] && [ -n "${ACR_REPOSITORY}" ]; then
+                push_acr="true"
+                tags+=("${acr_image}")
+              fi
+              if [ -n "${TCR_REGISTRY}" ] && [ -n "${TCR_NAMESPACE}" ] && [ -n "${TCR_REPOSITORY}" ]; then
+                push_tcr="true"
+                tags+=("${tcr_image}")
+              fi
+              deploy_image="${ghcr_image}"
+              ;;
+            *)
+              echo "Unsupported REGISTRY_TARGET=${target}. Use ghcr|acr|tcr|all." >&2
+              exit 1
+              ;;
+          esac
+
+          {
+            echo "all_tags<<EOF"
+            printf '%s\n' "${tags[@]}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+          echo "ghcr_image=${ghcr_image}" >> "$GITHUB_OUTPUT"
+          echo "acr_image=${acr_image}" >> "$GITHUB_OUTPUT"
+          echo "tcr_image=${tcr_image}" >> "$GITHUB_OUTPUT"
+          echo "push_ghcr=${push_ghcr}" >> "$GITHUB_OUTPUT"
+          echo "push_acr=${push_acr}" >> "$GITHUB_OUTPUT"
+          echo "push_tcr=${push_tcr}" >> "$GITHUB_OUTPUT"
+          echo "deploy_image=${deploy_image}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login GHCR
+        if: ${{ steps.tags.outputs.push_ghcr == 'true' }}
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Login ACR
+        if: ${{ steps.tags.outputs.push_acr == 'true' }}
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ secrets.ACR_REGISTRY }}
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+
+      - name: Login TCR
+        if: ${{ steps.tags.outputs.push_tcr == 'true' }}
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ secrets.TCR_REGISTRY }}
+          username: ${{ secrets.TCR_USERNAME }}
+          password: ${{ secrets.TCR_PASSWORD }}
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.tags.outputs.all_tags }}
+
+  deploy-vps:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy on VPS via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          DEPLOY_IMAGE: ${{ needs.build-and-push.outputs.deploy_image }}
+          PUSH_ACR: ${{ needs.build-and-push.outputs.push_acr }}
+          PUSH_TCR: ${{ needs.build-and-push.outputs.push_tcr }}
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          port: ${{ secrets.DEPLOY_PORT }}
+          envs: DEPLOY_IMAGE,PUSH_ACR,PUSH_TCR
+          script: |
+            set -euo pipefail
+            cd "${{ secrets.DEPLOY_PATH }}"
+
+            if [ "${PUSH_ACR}" = "true" ] && [[ "${DEPLOY_IMAGE}" == "${{ secrets.ACR_REGISTRY }}"* ]]; then
+              docker login "${{ secrets.ACR_REGISTRY }}" -u "${{ secrets.ACR_USERNAME }}" -p "${{ secrets.ACR_PASSWORD }}"
+            fi
+            if [ "${PUSH_TCR}" = "true" ] && [[ "${DEPLOY_IMAGE}" == "${{ secrets.TCR_REGISTRY }}"* ]]; then
+              docker login "${{ secrets.TCR_REGISTRY }}" -u "${{ secrets.TCR_USERNAME }}" -p "${{ secrets.TCR_PASSWORD }}"
+            fi
+
+            export NEW_API_IMAGE="${DEPLOY_IMAGE}"
+            docker compose pull new-api
+            docker compose up -d new-api
+            docker compose ps
