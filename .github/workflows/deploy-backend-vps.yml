@@ -27,16 +27,21 @@ jobs:
         env:
           SHA_TAG: ${{ github.sha }}
           GH_OWNER: ${{ github.repository_owner }}
+          REGISTRY_TARGET_SECRET: ${{ secrets.REGISTRY_TARGET }}
           ACR_REGISTRY: ${{ secrets.ACR_REGISTRY }}
+          ACR_USERNAME: ${{ secrets.ACR_USERNAME }}
+          ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}
           ACR_NAMESPACE: ${{ secrets.ACR_NAMESPACE }}
           ACR_REPOSITORY: ${{ secrets.ACR_REPOSITORY }}
           TCR_REGISTRY: ${{ secrets.TCR_REGISTRY }}
+          TCR_USERNAME: ${{ secrets.TCR_USERNAME }}
+          TCR_PASSWORD: ${{ secrets.TCR_PASSWORD }}
           TCR_NAMESPACE: ${{ secrets.TCR_NAMESPACE }}
           TCR_REPOSITORY: ${{ secrets.TCR_REPOSITORY }}
-          REGISTRY_TARGET: ${{ vars.REGISTRY_TARGET }}
         run: |
           set -euo pipefail
-          target="$(echo "${REGISTRY_TARGET:-ghcr}" | tr '[:upper:]' '[:lower:]')"
+          target_raw="${REGISTRY_TARGET_SECRET:-ghcr}"
+          target="$(echo "${target_raw}" | tr '[:upper:]' '[:lower:]')"
           short_sha="${SHA_TAG:0:12}"
           tags=()
           push_ghcr="false"
@@ -55,8 +60,8 @@ jobs:
               deploy_image="${ghcr_image}"
               ;;
             acr)
-              if [ -z "${ACR_REGISTRY}" ] || [ -z "${ACR_NAMESPACE}" ] || [ -z "${ACR_REPOSITORY}" ]; then
-                echo "REGISTRY_TARGET=acr but ACR_* is incomplete" >&2
+              if [ -z "${ACR_REGISTRY}" ] || [ -z "${ACR_USERNAME}" ] || [ -z "${ACR_PASSWORD}" ] || [ -z "${ACR_NAMESPACE}" ] || [ -z "${ACR_REPOSITORY}" ]; then
+                echo "REGISTRY_TARGET=acr but ACR_* is incomplete (need REGISTRY/USERNAME/PASSWORD/NAMESPACE/REPOSITORY)" >&2
                 exit 1
               fi
               push_acr="true"
@@ -64,8 +69,8 @@ jobs:
               deploy_image="${acr_image}"
               ;;
             tcr)
-              if [ -z "${TCR_REGISTRY}" ] || [ -z "${TCR_NAMESPACE}" ] || [ -z "${TCR_REPOSITORY}" ]; then
-                echo "REGISTRY_TARGET=tcr but TCR_* is incomplete" >&2
+              if [ -z "${TCR_REGISTRY}" ] || [ -z "${TCR_USERNAME}" ] || [ -z "${TCR_PASSWORD}" ] || [ -z "${TCR_NAMESPACE}" ] || [ -z "${TCR_REPOSITORY}" ]; then
+                echo "REGISTRY_TARGET=tcr but TCR_* is incomplete (need REGISTRY/USERNAME/PASSWORD/NAMESPACE/REPOSITORY)" >&2
                 exit 1
               fi
               push_tcr="true"
@@ -102,7 +107,18 @@ jobs:
           echo "push_ghcr=${push_ghcr}" >> "$GITHUB_OUTPUT"
           echo "push_acr=${push_acr}" >> "$GITHUB_OUTPUT"
           echo "push_tcr=${push_tcr}" >> "$GITHUB_OUTPUT"
+          echo "target=${target}" >> "$GITHUB_OUTPUT"
           echo "deploy_image=${deploy_image}" >> "$GITHUB_OUTPUT"
+
+      - name: Show push decision
+        run: |
+          echo "registry_target=${{ steps.tags.outputs.target }}"
+          echo "push_ghcr=${{ steps.tags.outputs.push_ghcr }}"
+          echo "push_acr=${{ steps.tags.outputs.push_acr }}"
+          echo "push_tcr=${{ steps.tags.outputs.push_tcr }}"
+          echo "deploy_image=${{ steps.tags.outputs.deploy_image }}"
+          echo "all_tags:"
+          echo "${{ steps.tags.outputs.all_tags }}"
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -171,7 +187,22 @@ jobs:
               docker login "${{ secrets.TCR_REGISTRY }}" -u "${{ secrets.TCR_USERNAME }}" -p "${{ secrets.TCR_PASSWORD }}"
             fi
 
-            export NEW_API_IMAGE="${DEPLOY_IMAGE}"
+            image_no_tag="${DEPLOY_IMAGE%:*}"
+            image_tag="${DEPLOY_IMAGE##*:}"
+            image_registry="${image_no_tag%%/*}"
+            image_repo_path="${image_no_tag#*/}"
+            image_namespace="${image_repo_path%/*}"
+            image_repository="${image_repo_path##*/}"
+
+            if [ -z "${image_registry}" ] || [ -z "${image_namespace}" ] || [ -z "${image_repository}" ] || [ -z "${image_tag}" ]; then
+              echo "Invalid DEPLOY_IMAGE: ${DEPLOY_IMAGE}" >&2
+              exit 1
+            fi
+
+            export IMAGE_REGISTRY="${image_registry}"
+            export IMAGE_NAMESPACE="${image_namespace}"
+            export IMAGE_REPOSITORY="${image_repository}"
+            export IMAGE_TAG="${image_tag}"
             docker compose pull new-api
             docker compose up -d new-api
             docker compose ps
