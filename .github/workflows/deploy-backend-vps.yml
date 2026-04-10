@@ -45,14 +45,18 @@ jobs:
           push_tcr="false"
 
           ghcr_image="ghcr.io/${GH_OWNER}/new-api:${short_sha}"
+          ghcr_latest="ghcr.io/${GH_OWNER}/new-api:latest"
           acr_image="${ACR_REGISTRY}/${ACR_NAMESPACE}/${ACR_REPOSITORY}:${short_sha}"
+          acr_latest="${ACR_REGISTRY}/${ACR_NAMESPACE}/${ACR_REPOSITORY}:latest"
           tcr_image="${TCR_REGISTRY}/${TCR_NAMESPACE}/${TCR_REPOSITORY}:${short_sha}"
+          tcr_latest="${TCR_REGISTRY}/${TCR_NAMESPACE}/${TCR_REPOSITORY}:latest"
           deploy_image="${ghcr_image}"
 
           case "${target}" in
             ghcr|"")
               push_ghcr="true"
               tags+=("${ghcr_image}")
+              tags+=("${ghcr_latest}")
               deploy_image="${ghcr_image}"
               ;;
             acr)
@@ -62,6 +66,7 @@ jobs:
               fi
               push_acr="true"
               tags+=("${acr_image}")
+              tags+=("${acr_latest}")
               deploy_image="${acr_image}"
               ;;
             tcr)
@@ -71,18 +76,22 @@ jobs:
               fi
               push_tcr="true"
               tags+=("${tcr_image}")
+              tags+=("${tcr_latest}")
               deploy_image="${tcr_image}"
               ;;
             all)
               push_ghcr="true"
               tags+=("${ghcr_image}")
+              tags+=("${ghcr_latest}")
               if [ -n "${ACR_REGISTRY}" ] && [ -n "${ACR_NAMESPACE}" ] && [ -n "${ACR_REPOSITORY}" ]; then
                 push_acr="true"
                 tags+=("${acr_image}")
+                tags+=("${acr_latest}")
               fi
               if [ -n "${TCR_REGISTRY}" ] && [ -n "${TCR_NAMESPACE}" ] && [ -n "${TCR_REPOSITORY}" ]; then
                 push_tcr="true"
                 tags+=("${tcr_image}")
+                tags+=("${tcr_latest}")
               fi
               deploy_image="${ghcr_image}"
               ;;
