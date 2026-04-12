@@ -2,9 +2,11 @@ package helper
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
@@ -45,10 +47,16 @@ func HandleGroupRatio(ctx *gin.Context, relayInfo *relaycommon.RelayInfo) types.
 	return groupRatioInfo
 }
 
-func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens int, meta *types.TokenCountMeta) (types.PriceData, error) {
-	modelPrice, usePrice := ratio_setting.GetModelPrice(info.OriginModelName, false)
+func getModelPriceWithGroup(modelName, group string, printErr bool) (float64, bool) {
+	if groupPrice, ok := ratio_setting.GetModelPriceByGroup(modelName, group, false); ok {
+		return groupPrice, true
+	}
+	return ratio_setting.GetModelPrice(modelName, printErr)
+}
 
+func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens int, meta *types.TokenCountMeta) (types.PriceData, error) {
 	groupRatioInfo := HandleGroupRatio(c, info)
+	modelPrice, usePrice := getModelPriceWithGroup(info.OriginModelName, info.UsingGroup, false)
 
 	var preConsumedQuota int
 	var modelRatio float64
@@ -143,7 +151,7 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 func ModelPriceHelperPerCall(c *gin.Context, info *relaycommon.RelayInfo) (types.PriceData, error) {
 	groupRatioInfo := HandleGroupRatio(c, info)
 
-	modelPrice, success := ratio_setting.GetModelPrice(info.OriginModelName, true)
+	modelPrice, success := getModelPriceWithGroup(info.OriginModelName, info.UsingGroup, true)
 	usePrice := success
 	var modelRatio float64
 
@@ -210,4 +218,63 @@ func ContainPriceOrRatio(modelName string) bool {
 		return true
 	}
 	return false
+}
+
+func inferTaskBillingModeFromDescription(modelName, group string) (string, bool) {
+	group = strings.TrimSpace(strings.ToLower(group))
+	if group == "" {
+		return "", false
+	}
+	for _, p := range model.GetPricing() {
+		if p.ModelName != modelName {
+			continue
+		}
+		desc := strings.TrimSpace(p.Description)
+		if desc == "" {
+			return "", false
+		}
+		marker := "计费："
+		idx := strings.Index(desc, marker)
+		if idx < 0 {
+			marker = "计费来源："
+			idx = strings.Index(desc, marker)
+		}
+		if idx < 0 {
+			return "", false
+		}
+		source := strings.TrimSpace(desc[idx+len(marker):])
+		parts := strings.Split(source, "；")
+		for _, raw := range parts {
+			part := strings.TrimSpace(raw)
+			if part == "" {
+				continue
+			}
+			if !strings.HasPrefix(part, group+"=") {
+				continue
+			}
+			if strings.Contains(part, "按秒") {
+				return "per_second", true
+			}
+			if strings.Contains(part, "按量") {
+				return "per_token", true
+			}
+			if strings.Contains(part, "固定按次") || strings.Contains(part, "按次") {
+				return "per_call", true
+			}
+			return "", false
+		}
+		return "", false
+	}
+	return "", false
+}
+
+// ShouldApplyTaskOtherRatios controls whether task OtherRatios (seconds/size etc.)
+// should be multiplied into quota for current model+group.
+func ShouldApplyTaskOtherRatios(info *relaycommon.RelayInfo) bool {
+	mode, ok := inferTaskBillingModeFromDescription(info.OriginModelName, info.UsingGroup)
+	if !ok {
+		// Keep legacy behavior when mode is unknown.
+		return true
+	}
+	return mode != "per_call"
 }
