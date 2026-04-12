@@ -1,4 +1,4 @@
-/*
+﻿/*
 Copyright (C) 2025 QuantumNous
 
 This program is free software: you can redistribute it and/or modify
@@ -47,8 +47,17 @@ const ModelPricingTable = ({
     if (record.quota_type !== 1) return 'unknown';
 
     const desc = String(record.description || '');
-    const marker = '计费来源：';
-    const idx = desc.indexOf(marker);
+    const markers = ['计费：', '计费来源：'];
+    let idx = -1;
+    let marker = '';
+    for (const m of markers) {
+      const pos = desc.indexOf(m);
+      if (pos >= 0) {
+        idx = pos;
+        marker = m;
+        break;
+      }
+    }
     if (idx < 0) return 'per_call';
 
     const sourceText = desc.slice(idx + marker.length);
@@ -59,6 +68,7 @@ const ModelPricingTable = ({
     const hit = parts.find((p) => p.startsWith(`${groupName}=`));
     if (!hit) return 'per_call';
     if (hit.includes('按秒')) return 'per_second';
+    if (hit.includes('按量')) return 'per_token';
     if (hit.includes('固定按次') || hit.includes('按次')) return 'per_call';
     return 'per_call';
   };
@@ -212,14 +222,14 @@ const ModelPricingTable = ({
       {autoChain.length > 0 && (
         <div className='flex flex-wrap items-center gap-1 mb-4'>
           <span className='text-sm text-gray-600'>{t('auto分组调用链路')}</span>
-          <span className='text-sm'>→</span>
+          <span className='text-sm'>-&gt;</span>
           {autoChain.map((g, idx) => (
             <React.Fragment key={g}>
               <Tag color='white' size='small' shape='circle'>
                 {g}
                 {t('分组')}
               </Tag>
-              {idx < autoChain.length - 1 && <span className='text-sm'>→</span>}
+              {idx < autoChain.length - 1 && <span className='text-sm'>-&gt;</span>}
             </React.Fragment>
           ))}
         </div>
@@ -230,3 +240,4 @@ const ModelPricingTable = ({
 };
 
 export default ModelPricingTable;
+
