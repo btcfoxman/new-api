@@ -49,4 +49,14 @@ func SetVideoRouter(router *gin.Engine) {
 		// Maps to: /?Action=CVSync2AsyncSubmitTask&Version=2022-08-31 and /?Action=CVSync2AsyncGetResult&Version=2022-08-31
 		jimengOfficialGroup.POST("/", controller.RelayTask)
 	}
+
+	// Doubao official API routes
+    doubaoOfficialGroup := router.Group("/api/v3")
+    doubaoOfficialGroup.Use(middleware.RouteTag("relay"))
+    doubaoOfficialGroup.Use(middleware.TokenAuth(), middleware.Distribute())
+    {
+        doubaoOfficialGroup.POST("/contents/generations/tasks", controller.RelayTask)
+        doubaoOfficialGroup.GET("/contents/generations/tasks/:task_id", controller.RelayTaskFetch)
+		// doubaoOfficialGroup.GET("/contents/generations/tasks", controller.BatchQueryTasks)
+    }
 }
