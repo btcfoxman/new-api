@@ -55,8 +55,11 @@ func CORS() gin.HandlerFunc {
 		"New-API-User",
 		"X-Requested-With",
 		"Cache-Control",
+		"cache-control",
 		"Pragma",
+		"pragma",
 		"Expires",
+		"expires",
 	}
 	allowedOrigins := buildAllowedOrigins()
 	config.AllowOriginFunc = func(origin string) bool {
