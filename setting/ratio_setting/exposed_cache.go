@@ -1,10 +1,10 @@
 package ratio_setting
 
 import (
+	"github.com/gin-gonic/gin"
 	"sync"
 	"sync/atomic"
 	"time"
-	"github.com/gin-gonic/gin"
 )
 
 const exposedDataTTL = 30 * time.Second
@@ -47,6 +47,7 @@ func GetExposedData() gin.H {
 		"create_cache_ratio":   GetCreateCacheRatioCopy(),
 		"model_price":          GetModelPriceCopy(),
 		"model_price_by_group": GetModelPriceByGroupCopy(),
+		"group_pricing_rule":   GetTaskGroupPricingRuleCopy(),
 	}
 	exposedData.Store(&exposedCache{
 		data:      newData,

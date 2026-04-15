@@ -20,7 +20,11 @@ For commercial licensing, please contact support@quantumnous.com
 import React from 'react';
 import { Card, Avatar, Typography, Table, Tag } from '@douyinfe/semi-ui';
 import { IconCoinMoneyStroked } from '@douyinfe/semi-icons';
-import { calculateModelPrice, getModelPriceItems } from '../../../../../helpers';
+import {
+  calculateModelPrice,
+  getGroupBillingMode,
+  getModelPriceItems,
+} from '../../../../../helpers';
 
 const { Text } = Typography;
 
@@ -40,38 +44,6 @@ const ModelPricingTable = ({
     ? modelData.enable_groups
     : [];
   const autoChain = autoGroups.filter((g) => modelEnableGroups.includes(g));
-
-  const inferGroupBillingMode = (record, groupName) => {
-    if (!record) return 'unknown';
-    if (record.quota_type === 0) return 'per_token';
-    if (record.quota_type !== 1) return 'unknown';
-
-    const desc = String(record.description || '');
-    const markers = ['计费：', '计费来源：'];
-    let idx = -1;
-    let marker = '';
-    for (const m of markers) {
-      const pos = desc.indexOf(m);
-      if (pos >= 0) {
-        idx = pos;
-        marker = m;
-        break;
-      }
-    }
-    if (idx < 0) return 'per_call';
-
-    const sourceText = desc.slice(idx + marker.length);
-    const parts = sourceText
-      .split('；')
-      .map((x) => x.trim())
-      .filter(Boolean);
-    const hit = parts.find((p) => p.startsWith(`${groupName}=`));
-    if (!hit) return 'per_call';
-    if (hit.includes('按秒')) return 'per_second';
-    if (hit.includes('按量')) return 'per_token';
-    if (hit.includes('固定按次') || hit.includes('按次')) return 'per_call';
-    return 'per_call';
-  };
 
   const billingModeLabel = (mode) => {
     if (mode === 'per_token') return t('按量计费');
@@ -114,13 +86,13 @@ const ModelPricingTable = ({
             quotaDisplayType: siteDisplayType,
           })
         : { inputPrice: '-', outputPrice: '-', price: '-' };
-      const billingMode = inferGroupBillingMode(modelData, group);
-      let priceItems = getModelPriceItems(priceData, t, siteDisplayType);
-      if (billingMode === 'per_second' && modelData?.quota_type === 1) {
-        priceItems = priceItems.map((item) =>
-          item.key === 'fixed' ? { ...item, suffix: ` / ${t('秒')}` } : item,
-        );
-      }
+      const billingMode = getGroupBillingMode(modelData, group);
+      const priceItems = getModelPriceItems(
+        priceData,
+        t,
+        siteDisplayType,
+        billingMode,
+      );
 
       // 获取分组倍率
       const groupRatioValue =

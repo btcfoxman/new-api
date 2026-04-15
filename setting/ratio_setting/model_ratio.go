@@ -1,6 +1,7 @@
 package ratio_setting
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -324,8 +325,16 @@ var defaultAudioCompletionRatio = map[string]float64{
 
 var modelPriceMap = types.NewRWMap[string, float64]()
 var modelPriceByGroupMap = types.NewRWMap[string, map[string]float64]()
+var modelPriceRuleByGroupMap = types.NewRWMap[string, map[string]TaskGroupPricingRule]()
 var modelRatioMap = types.NewRWMap[string, float64]()
 var completionRatioMap = types.NewRWMap[string, float64]()
+
+type TaskGroupPricingRule struct {
+	BillingMode       string         `json:"billing_mode,omitempty"`
+	IgnoreOtherRatios bool           `json:"ignore_other_ratios,omitempty"`
+	BasePrice         *float64       `json:"base_price,omitempty"`
+	Dimensions        map[string]any `json:"dimensions,omitempty"`
+}
 
 var defaultCompletionRatio = map[string]float64{
 	"gpt-4-gizmo-*":  2,
@@ -363,7 +372,121 @@ func UpdateModelPriceByJSONString(jsonStr string) error {
 }
 
 func UpdateModelPriceByGroupByJSONString(jsonStr string) error {
-	return types.LoadFromJsonStringWithCallback(modelPriceByGroupMap, jsonStr, InvalidateExposedDataCache)
+	type rawGroupEntry map[string]any
+	raw := map[string]rawGroupEntry{}
+	if err := common.Unmarshal([]byte(jsonStr), &raw); err != nil {
+		return err
+	}
+
+	priceMap := make(map[string]map[string]float64)
+	ruleMap := make(map[string]map[string]TaskGroupPricingRule)
+
+	for rawModelName, rawGroups := range raw {
+		modelName := FormatMatchingModelName(strings.TrimSpace(rawModelName))
+		if modelName == "" || len(rawGroups) == 0 {
+			continue
+		}
+
+		modelPrices := make(map[string]float64)
+		modelRules := make(map[string]TaskGroupPricingRule)
+
+		for rawGroupName, rawValue := range rawGroups {
+			groupName := strings.TrimSpace(strings.ToLower(rawGroupName))
+			if groupName == "" {
+				continue
+			}
+
+			switch value := rawValue.(type) {
+			case float64:
+				modelPrices[groupName] = value
+			case int:
+				modelPrices[groupName] = float64(value)
+			case map[string]any:
+				rule, price, ok, err := parseTaskGroupPricingRule(value)
+				if err != nil {
+					return fmt.Errorf("invalid ModelPriceByGroup rule for %s.%s: %w", modelName, groupName, err)
+				}
+				if !ok {
+					continue
+				}
+				modelRules[groupName] = rule
+				if price != nil {
+					modelPrices[groupName] = *price
+				}
+			default:
+				return fmt.Errorf("invalid ModelPriceByGroup value type for %s.%s", modelName, groupName)
+			}
+		}
+
+		if len(modelPrices) > 0 {
+			priceMap[modelName] = modelPrices
+		}
+		if len(modelRules) > 0 {
+			ruleMap[modelName] = modelRules
+		}
+	}
+
+	modelPriceByGroupMap.Clear()
+	modelPriceByGroupMap.AddAll(priceMap)
+	modelPriceRuleByGroupMap.Clear()
+	modelPriceRuleByGroupMap.AddAll(ruleMap)
+	InvalidateExposedDataCache()
+	return nil
+}
+
+func parseTaskGroupPricingRule(raw map[string]any) (TaskGroupPricingRule, *float64, bool, error) {
+	rule := TaskGroupPricingRule{}
+	var price *float64
+
+	if mode, ok := raw["billing_mode"].(string); ok {
+		mode = strings.TrimSpace(strings.ToLower(mode))
+		switch mode {
+		case "", "per_call", "per_second", "per_token":
+			rule.BillingMode = mode
+		default:
+			return TaskGroupPricingRule{}, nil, false, fmt.Errorf("unsupported billing_mode: %s", mode)
+		}
+	}
+
+	if ignore, ok := raw["ignore_other_ratios"].(bool); ok {
+		rule.IgnoreOtherRatios = ignore
+	}
+
+	if basePrice, ok := parseFloatLike(raw["base_price"]); ok {
+		value := basePrice
+		rule.BasePrice = &value
+		price = &value
+	} else if flatPrice, ok := parseFloatLike(raw["price"]); ok {
+		value := flatPrice
+		price = &value
+	}
+
+	if dims, ok := raw["dimensions"].(map[string]any); ok && len(dims) > 0 {
+		rule.Dimensions = dims
+	}
+
+	if rule.BillingMode == "" && !rule.IgnoreOtherRatios && rule.BasePrice == nil && len(rule.Dimensions) == 0 && price == nil {
+		return TaskGroupPricingRule{}, nil, false, nil
+	}
+
+	return rule, price, true, nil
+}
+
+func parseFloatLike(value any) (float64, bool) {
+	switch v := value.(type) {
+	case float64:
+		return v, true
+	case float32:
+		return float64(v), true
+	case int:
+		return float64(v), true
+	case int64:
+		return float64(v), true
+	case int32:
+		return float64(v), true
+	default:
+		return 0, false
+	}
 }
 
 // GetModelPrice 返回模型的价格，如果模型不存在则返回-1，false
@@ -420,6 +543,31 @@ func GetModelPriceByGroup(name string, group string, printErr bool) (float64, bo
 	return -1, false
 }
 
+func GetTaskGroupPricingRule(name string, group string) (TaskGroupPricingRule, bool) {
+	name = FormatMatchingModelName(name)
+	group = strings.TrimSpace(strings.ToLower(group))
+	if group == "" {
+		return TaskGroupPricingRule{}, false
+	}
+
+	groupMap, ok := modelPriceRuleByGroupMap.Get(name)
+	if ok {
+		if rule, exists := groupMap[group]; exists {
+			return rule, true
+		}
+	}
+
+	if strings.HasSuffix(name, CompactModelSuffix) {
+		groupMap, ok = modelPriceRuleByGroupMap.Get(CompactWildcardModelKey)
+		if ok {
+			if rule, exists := groupMap[group]; exists {
+				return rule, true
+			}
+		}
+	}
+	return TaskGroupPricingRule{}, false
+}
+
 func GetModelPriceGroupMapForModel(name string) map[string]float64 {
 	name = FormatMatchingModelName(name)
 	groupMap, ok := modelPriceByGroupMap.Get(name)
@@ -432,6 +580,24 @@ func GetModelPriceGroupMapForModel(name string) map[string]float64 {
 		return map[string]float64{}
 	}
 	copied := make(map[string]float64, len(groupMap))
+	for k, v := range groupMap {
+		copied[k] = v
+	}
+	return copied
+}
+
+func GetTaskGroupPricingRuleMapForModel(name string) map[string]TaskGroupPricingRule {
+	name = FormatMatchingModelName(name)
+	groupMap, ok := modelPriceRuleByGroupMap.Get(name)
+	if !ok {
+		if strings.HasSuffix(name, CompactModelSuffix) {
+			groupMap, ok = modelPriceRuleByGroupMap.Get(CompactWildcardModelKey)
+		}
+	}
+	if !ok || groupMap == nil {
+		return map[string]TaskGroupPricingRule{}
+	}
+	copied := make(map[string]TaskGroupPricingRule, len(groupMap))
 	for k, v := range groupMap {
 		copied[k] = v
 	}
@@ -754,6 +920,10 @@ func GetModelPriceCopy() map[string]float64 {
 
 func GetModelPriceByGroupCopy() map[string]map[string]float64 {
 	return modelPriceByGroupMap.ReadAll()
+}
+
+func GetTaskGroupPricingRuleCopy() map[string]map[string]TaskGroupPricingRule {
+	return modelPriceRuleByGroupMap.ReadAll()
 }
 
 func GetCompletionRatioCopy() map[string]float64 {

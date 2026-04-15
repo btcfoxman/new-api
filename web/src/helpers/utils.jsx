@@ -777,10 +777,32 @@ export const calculateModelPrice = ({
   };
 };
 
+export const getGroupBillingMode = (record, groupName) => {
+  if (!record) return 'unknown';
+  const normalizedGroup = String(groupName || '').trim().toLowerCase();
+  const ruleMap = record?.group_pricing_rule;
+  const groupRule =
+    normalizedGroup && ruleMap && typeof ruleMap === 'object'
+      ? ruleMap[normalizedGroup]
+      : null;
+  const billingMode = String(groupRule?.billing_mode || '')
+    .trim()
+    .toLowerCase();
+
+  if (billingMode === 'per_token') return 'per_token';
+  if (billingMode === 'per_second') return 'per_second';
+  if (billingMode === 'per_call') return 'per_call';
+
+  if (record.quota_type === 0) return 'per_token';
+  if (record.quota_type === 1) return 'per_call';
+  return 'unknown';
+};
+
 export const getModelPriceItems = (
   priceData,
   t,
   quotaDisplayType = 'USD',
+  billingMode = 'unknown',
 ) => {
   if (priceData.isPerToken) {
     if (quotaDisplayType === 'TOKENS' || priceData.isTokensDisplay) {
@@ -885,14 +907,28 @@ export const getModelPriceItems = (
       key: 'fixed',
       label: t('模型价格'),
       value: priceData.price,
-      suffix: ` / ${t('次')}`,
+      suffix:
+        billingMode === 'per_second'
+          ? ` / ${t('秒')}`
+          : ` / ${t('次')}`,
     },
   ].filter((item) => item.value !== null && item.value !== undefined && item.value !== '');
 };
 
 // 格式化价格信息（用于卡片视图）
-export const formatPriceInfo = (priceData, t, quotaDisplayType = 'USD') => {
-  const items = getModelPriceItems(priceData, t, quotaDisplayType);
+export const formatPriceInfo = (
+  priceData,
+  t,
+  quotaDisplayType = 'USD',
+  record = null,
+  groupName = '',
+) => {
+  const items = getModelPriceItems(
+    priceData,
+    t,
+    quotaDisplayType,
+    getGroupBillingMode(record, groupName),
+  );
   return (
     <>
       {items.map((item) => (

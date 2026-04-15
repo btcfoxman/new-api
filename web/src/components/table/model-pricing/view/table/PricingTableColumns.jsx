@@ -24,6 +24,7 @@ import {
   renderModelTag,
   stringToColor,
   calculateModelPrice,
+  getGroupBillingMode,
   getModelPriceItems,
   getLobeHubIcon,
 } from '../../../../../helpers';
@@ -234,7 +235,12 @@ export const getPricingTableColumns = ({
     ...(isMobile ? {} : { fixed: 'right' }),
     render: (text, record, index) => {
       const priceData = getPriceData(record);
-      const priceItems = getModelPriceItems(priceData, t, siteDisplayType);
+      const priceItems = getModelPriceItems(
+        priceData,
+        t,
+        siteDisplayType,
+        getGroupBillingMode(record, priceData?.usedGroup || selectedGroup),
+      );
 
       return (
         <div className='space-y-1'>

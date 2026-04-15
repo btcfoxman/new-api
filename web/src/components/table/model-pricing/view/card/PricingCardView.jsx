@@ -38,6 +38,7 @@ import {
   stringToColor,
   calculateModelPrice,
   formatPriceInfo,
+  getGroupBillingMode,
   getLobeHubIcon,
 } from '../../../../../helpers';
 import PricingCardSkeleton from './PricingCardSkeleton';
@@ -153,19 +154,29 @@ const PricingCardView = ({
 
   // 渲染标签
   const renderTags = (record) => {
+    const billingMode = getGroupBillingMode(
+      record,
+      selectedGroup === 'all' ? 'default' : selectedGroup,
+    );
     // 计费类型标签（左边）
     let billingTag = (
       <Tag key='billing' shape='circle' color='white' size='small'>
         -
       </Tag>
     );
-    if (record.quota_type === 1) {
+    if (billingMode === 'per_call') {
       billingTag = (
         <Tag key='billing' shape='circle' color='teal' size='small'>
           {t('按次计费')}
         </Tag>
       );
-    } else if (record.quota_type === 0) {
+    } else if (billingMode === 'per_second') {
+      billingTag = (
+        <Tag key='billing' shape='circle' color='cyan' size='small'>
+          {t('按秒计费')}
+        </Tag>
+      );
+    } else if (billingMode === 'per_token') {
       billingTag = (
         <Tag key='billing' shape='circle' color='violet' size='small'>
           {t('按量计费')}
@@ -267,7 +278,13 @@ const PricingCardView = ({
                         {model.model_name}
                       </h3>
                       <div className='flex flex-col gap-1 text-xs mt-1'>
-                        {formatPriceInfo(priceData, t, siteDisplayType)}
+                        {formatPriceInfo(
+                          priceData,
+                          t,
+                          siteDisplayType,
+                          model,
+                          priceData?.usedGroup || selectedGroup,
+                        )}
                       </div>
                     </div>
                   </div>
