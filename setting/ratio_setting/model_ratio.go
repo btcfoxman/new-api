@@ -451,6 +451,9 @@ func parseTaskGroupPricingRule(raw map[string]any) (TaskGroupPricingRule, *float
 	if ignore, ok := raw["ignore_other_ratios"].(bool); ok {
 		rule.IgnoreOtherRatios = ignore
 	}
+	if rule.BillingMode == "per_call" {
+		rule.IgnoreOtherRatios = true
+	}
 
 	if basePrice, ok := parseFloatLike(raw["base_price"]); ok {
 		value := basePrice
