@@ -58,6 +58,9 @@ const TopUp = () => {
   const [enableOnlineTopUp, setEnableOnlineTopUp] = useState(
     statusState?.status?.enable_online_topup || false,
   );
+  const [enableExtPayTopUp, setEnableExtPayTopUp] = useState(
+    statusState?.status?.enable_extpay_topup || false,
+  );
   const [priceRatio, setPriceRatio] = useState(statusState?.status?.price || 1);
 
   const [enableStripeTopUp, setEnableStripeTopUp] = useState(
@@ -163,7 +166,7 @@ const TopUp = () => {
         return;
       }
     } else {
-      if (!enableOnlineTopUp) {
+      if (!enableOnlineTopUp && !enableExtPayTopUp) {
         showError(t('管理员未开启在线充值！'));
         return;
       }
@@ -216,6 +219,11 @@ const TopUp = () => {
           amount: parseInt(topUpCount),
           payment_method: 'stripe',
         });
+      } else if (payWay === 'extpay') {
+        res = await API.post('/api/user/ext-pay', {
+          amount: parseInt(topUpCount),
+          payment_method: 'extpay',
+        });
       } else {
         // 普通支付请求
         res = await API.post('/api/user/pay', {
@@ -226,10 +234,18 @@ const TopUp = () => {
 
       if (res !== undefined) {
         const { message, data } = res.data;
-        if (message === 'success') {
+        const success = res.data?.success || message === 'success';
+        if (success) {
           if (payWay === 'stripe') {
             // Stripe 支付回调处理
             window.open(data.pay_link, '_blank');
+          } else if (payWay === 'extpay') {
+            const redirectUrl = data?.url || res.data?.url;
+            if (redirectUrl) {
+              window.location.href = redirectUrl;
+            } else {
+              showError(t('支付链接不存在'));
+            }
           } else {
             // 普通支付表单提交
             let params = data;
@@ -479,7 +495,9 @@ const TopUp = () => {
 
           setPayMethods(payMethods);
           const enableStripeTopUp = data.enable_stripe_topup || false;
-          const enableOnlineTopUp = data.enable_online_topup || false;
+          const enableExtPayTopUp = data.enable_extpay_topup || false;
+          const enableOnlineTopUp =
+            (data.enable_online_topup || false) || enableExtPayTopUp;
           const enableCreemTopUp = data.enable_creem_topup || false;
           const minTopUpValue = enableOnlineTopUp
             ? data.min_topup
@@ -489,6 +507,7 @@ const TopUp = () => {
                 ? data.waffo_min_topup
                 : 1;
           setEnableOnlineTopUp(enableOnlineTopUp);
+          setEnableExtPayTopUp(enableExtPayTopUp);
           setEnableStripeTopUp(enableStripeTopUp);
           setEnableCreemTopUp(enableCreemTopUp);
           const enableWaffoTopUp = data.enable_waffo_topup || false;
