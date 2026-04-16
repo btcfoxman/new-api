@@ -81,20 +81,31 @@ const Home = () => {
   const [endpointIndex, setEndpointIndex] = useState(0);
   const isChinese = i18n.language.startsWith('zh');
 
+  const normalizeHomePageContent = (raw) => {
+    if (typeof raw !== 'string') {
+      return '';
+    }
+    return raw.replace(/^\uFEFF/, '');
+  };
+
   const displayHomePageContent = async () => {
     setHomePageContent(localStorage.getItem('home_page_content') || '');
     const res = await API.get('/api/home_page_content');
     const { success, message, data } = res.data;
     if (success) {
-      let content = data;
-      if (!data.startsWith('https://')) {
-        content = marked.parse(data);
+      const normalizedData = normalizeHomePageContent(data);
+      const trimmedData = normalizedData.trimStart();
+      let content = normalizedData;
+      if (!trimmedData.startsWith('https://')) {
+        const looksLikeRawHtml =
+          trimmedData.startsWith('<') && /<\/?[a-z][\s\S]*>/i.test(trimmedData);
+        content = looksLikeRawHtml ? normalizedData : marked.parse(normalizedData);
       }
       setHomePageContent(content);
       localStorage.setItem('home_page_content', content);
 
       // 如果内容是 URL，则发送主题模式
-      if (data.startsWith('https://')) {
+      if (trimmedData.startsWith('https://')) {
         const iframe = document.querySelector('iframe');
         if (iframe) {
           iframe.onload = () => {
