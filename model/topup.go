@@ -3,6 +3,7 @@ package model
 import (
 	"errors"
 	"fmt"
+	"strconv"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
@@ -12,15 +13,20 @@ import (
 )
 
 type TopUp struct {
-	Id               int     `json:"id"`
-	UserId           int     `json:"user_id" gorm:"index"`
-	Amount           int64   `json:"amount"`
-	Money            float64 `json:"money"`
-	TradeNo          string  `json:"trade_no" gorm:"unique;type:varchar(255);index"`
-	PaymentMethod    string  `json:"payment_method" gorm:"type:varchar(50)"`
-	CreateTime       int64   `json:"create_time"`
-	CompleteTime     int64   `json:"complete_time"`
-	Status           string  `json:"status"`
+	Id              int     `json:"id"`
+	UserId          int     `json:"user_id" gorm:"index"`
+	Amount          int64   `json:"amount"`
+	Money           float64 `json:"money"`
+	TradeNo         string  `json:"trade_no" gorm:"unique;type:varchar(255);index"`
+	PaymentMethod   string  `json:"payment_method" gorm:"type:varchar(50)"`
+	ExternalOrderNo string  `json:"external_order_no" gorm:"type:varchar(255);default:'';index"`
+	PaymentChannel  string  `json:"payment_channel" gorm:"type:varchar(50);default:''"`
+	PaymentExtra    string  `json:"payment_extra" gorm:"type:text"`
+	LastQueryTime   int64   `json:"last_query_time"`
+	QueryRetryCount int     `json:"query_retry_count"`
+	CreateTime      int64   `json:"create_time"`
+	CompleteTime    int64   `json:"complete_time"`
+	Status          string  `json:"status"`
 }
 
 func (topUp *TopUp) Insert() error {
@@ -53,6 +59,136 @@ func GetTopUpByTradeNo(tradeNo string) *TopUp {
 		return nil
 	}
 	return topUp
+}
+
+func GetUserTopUpByTradeNo(userId int, tradeNo string) *TopUp {
+	var topUp *TopUp
+	err := DB.Where("user_id = ? AND trade_no = ?", userId, tradeNo).First(&topUp).Error
+	if err != nil {
+		return nil
+	}
+	return topUp
+}
+
+func GetPendingExtPayTopUps(limit int, beforeTime int64) (topUps []*TopUp, err error) {
+	query := DB.Where("payment_method = ? AND status = ?", "extpay", common.TopUpStatusPending)
+	if beforeTime > 0 {
+		query = query.Where("last_query_time < ? OR last_query_time = 0", beforeTime)
+	}
+	if limit > 0 {
+		query = query.Limit(limit)
+	}
+	err = query.Order("id asc").Find(&topUps).Error
+	return topUps, err
+}
+
+func CompleteExtPayTopUp(tradeNo string, externalOrderNo string, uid string, amount decimal.Decimal, paymentExtra string) error {
+	if tradeNo == "" {
+		return errors.New("未提供订单号")
+	}
+
+	refCol := "`trade_no`"
+	if common.UsingPostgreSQL {
+		refCol = `"trade_no"`
+	}
+
+	var userId int
+	var quotaToAdd int
+	var payMoney float64
+
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		topUp := &TopUp{}
+		if err := tx.Set("gorm:query_option", "FOR UPDATE").Where(refCol+" = ?", tradeNo).First(topUp).Error; err != nil {
+			return errors.New("充值订单不存在")
+		}
+
+		if uid != "" && strconv.Itoa(topUp.UserId) != uid {
+			return errors.New("订单用户不匹配")
+		}
+
+		if amount.GreaterThan(decimal.Zero) {
+			money := decimal.NewFromFloat(topUp.Money).Round(2)
+			if !money.Equal(amount.Round(2)) {
+				return errors.New("订单金额不匹配")
+			}
+		}
+
+		if topUp.Status == common.TopUpStatusSuccess {
+			return nil
+		}
+
+		if topUp.Status != common.TopUpStatusPending {
+			return errors.New("充值订单状态错误")
+		}
+
+		topUp.CompleteTime = common.GetTimestamp()
+		topUp.Status = common.TopUpStatusSuccess
+		topUp.PaymentChannel = "extpay"
+		if externalOrderNo != "" {
+			topUp.ExternalOrderNo = externalOrderNo
+		}
+		if paymentExtra != "" {
+			topUp.PaymentExtra = paymentExtra
+		}
+		if err := tx.Save(topUp).Error; err != nil {
+			return err
+		}
+
+		dAmount := decimal.NewFromInt(topUp.Amount)
+		dQuotaPerUnit := decimal.NewFromFloat(common.QuotaPerUnit)
+		quotaToAdd = int(dAmount.Mul(dQuotaPerUnit).IntPart())
+		if quotaToAdd <= 0 {
+			return errors.New("无效的充值额度")
+		}
+
+		if err := tx.Model(&User{}).Where("id = ?", topUp.UserId).Update("quota", gorm.Expr("quota + ?", quotaToAdd)).Error; err != nil {
+			return err
+		}
+
+		userId = topUp.UserId
+		payMoney = topUp.Money
+		return nil
+	})
+
+	if err != nil {
+		return err
+	}
+
+	RecordLog(userId, LogTypeTopup, fmt.Sprintf("ExtPay充值成功，充值额度: %v，支付金额：%.2f", logger.FormatQuota(quotaToAdd), payMoney))
+	return nil
+}
+
+func MarkExtPayTopUpState(tradeNo string, status string, externalOrderNo string, paymentExtra string) error {
+	updates := map[string]interface{}{
+		"payment_channel": "extpay",
+		"payment_method":  "extpay",
+	}
+	if status != "" {
+		updates["status"] = status
+	}
+	if externalOrderNo != "" {
+		updates["external_order_no"] = externalOrderNo
+	}
+	if paymentExtra != "" {
+		updates["payment_extra"] = paymentExtra
+	}
+	query := DB.Model(&TopUp{}).Where("trade_no = ?", tradeNo)
+	if status == common.TopUpStatusFailed || status == common.TopUpStatusExpired {
+		// Never allow non-success terminal states to overwrite a settled order.
+		query = query.Where("status = ?", common.TopUpStatusPending)
+	}
+	return query.Updates(updates).Error
+}
+
+func UpdateExtPayQueryInfo(tradeNo string, lastQueryTime int64, queryRetryCount int, paymentExtra string) error {
+	updates := map[string]interface{}{
+		"last_query_time":   lastQueryTime,
+		"query_retry_count": queryRetryCount,
+	}
+	if paymentExtra != "" {
+		updates["payment_extra"] = paymentExtra
+	}
+	return DB.Model(&TopUp{}).Where("trade_no = ?", tradeNo).Updates(updates).Error
 }
 
 func Recharge(referenceId string, customerId string) (err error) {

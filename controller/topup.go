@@ -78,24 +78,44 @@ func GetTopUpInfo(c *gin.Context) {
 		}
 	}
 
+	if service.ExtPayAvailable() {
+		hasExtPay := false
+		for _, method := range payMethods {
+			if method["type"] == service.ExtPayMethodType {
+				hasExtPay = true
+				break
+			}
+		}
+		if !hasExtPay {
+			extPayMethod := map[string]string{
+				"name":      "External Pay",
+				"type":      service.ExtPayMethodType,
+				"color":     "rgba(var(--semi-green-5), 1)",
+				"min_topup": strconv.FormatInt(service.GetExtPayMinTopUp(), 10),
+			}
+			payMethods = append(payMethods, extPayMethod)
+		}
+	}
+
 	data := gin.H{
 		"enable_online_topup": operation_setting.PayAddress != "" && operation_setting.EpayId != "" && operation_setting.EpayKey != "",
 		"enable_stripe_topup": setting.StripeApiSecret != "" && setting.StripeWebhookSecret != "" && setting.StripePriceId != "",
 		"enable_creem_topup":  setting.CreemApiKey != "" && setting.CreemProducts != "[]",
-		"enable_waffo_topup": enableWaffo,
+		"enable_waffo_topup":  enableWaffo,
+		"enable_extpay_topup": service.ExtPayAvailable(),
 		"waffo_pay_methods": func() interface{} {
 			if enableWaffo {
 				return setting.GetWaffoPayMethods()
 			}
 			return nil
 		}(),
-		"creem_products": setting.CreemProducts,
-		"pay_methods":         payMethods,
-		"min_topup":           operation_setting.MinTopUp,
-		"stripe_min_topup":    setting.StripeMinTopUp,
-		"waffo_min_topup":     setting.WaffoMinTopUp,
-		"amount_options":      operation_setting.GetPaymentSetting().AmountOptions,
-		"discount":            operation_setting.GetPaymentSetting().AmountDiscount,
+		"creem_products":   setting.CreemProducts,
+		"pay_methods":      payMethods,
+		"min_topup":        operation_setting.MinTopUp,
+		"stripe_min_topup": setting.StripeMinTopUp,
+		"waffo_min_topup":  setting.WaffoMinTopUp,
+		"amount_options":   operation_setting.GetPaymentSetting().AmountOptions,
+		"discount":         operation_setting.GetPaymentSetting().AmountDiscount,
 	}
 	common.ApiSuccess(c, data)
 }
@@ -463,4 +483,3 @@ func AdminCompleteTopUp(c *gin.Context) {
 	}
 	common.ApiSuccess(c, nil)
 }
-

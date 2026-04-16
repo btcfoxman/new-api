@@ -86,6 +86,16 @@ func InitOptionMap() {
 	common.OptionMap["StripePriceId"] = setting.StripePriceId
 	common.OptionMap["StripeUnitPrice"] = strconv.FormatFloat(setting.StripeUnitPrice, 'f', -1, 64)
 	common.OptionMap["StripePromotionCodesEnabled"] = strconv.FormatBool(setting.StripePromotionCodesEnabled)
+	common.OptionMap["ExtPayEnabled"] = strconv.FormatBool(setting.ExtPayEnabled)
+	common.OptionMap["ExtPayBaseURL"] = setting.ExtPayBaseURL
+	common.OptionMap["ExtPayAppId"] = setting.ExtPayAppId
+	common.OptionMap["ExtPaySecret"] = setting.ExtPaySecret
+	common.OptionMap["ExtPayNotifyURL"] = setting.ExtPayNotifyURL
+	common.OptionMap["ExtPayReturnURL"] = setting.ExtPayReturnURL
+	common.OptionMap["ExtPayMinTopUp"] = strconv.Itoa(setting.ExtPayMinTopUp)
+	common.OptionMap["ExtPayQueryEnabled"] = strconv.FormatBool(setting.ExtPayQueryEnabled)
+	common.OptionMap["ExtPayQueryIntervalSeconds"] = strconv.Itoa(setting.ExtPayQueryIntervalSeconds)
+	common.OptionMap["ExtPayQueryTimeoutSeconds"] = strconv.Itoa(setting.ExtPayQueryTimeoutSeconds)
 	common.OptionMap["CreemApiKey"] = setting.CreemApiKey
 	common.OptionMap["CreemProducts"] = setting.CreemProducts
 	common.OptionMap["CreemTestMode"] = strconv.FormatBool(setting.CreemTestMode)
@@ -317,6 +327,10 @@ func updateOptionMap(key string, value string) (err error) {
 			setting.DefaultUseAutoGroup = boolValue
 		case "ExposeRatioEnabled":
 			ratio_setting.SetExposeRatioEnabled(boolValue)
+		case "ExtPayEnabled":
+			setting.ExtPayEnabled = boolValue
+		case "ExtPayQueryEnabled":
+			setting.ExtPayQueryEnabled = boolValue
 		}
 	}
 	switch key {
@@ -369,6 +383,22 @@ func updateOptionMap(key string, value string) (err error) {
 		setting.StripeMinTopUp, _ = strconv.Atoi(value)
 	case "StripePromotionCodesEnabled":
 		setting.StripePromotionCodesEnabled = value == "true"
+	case "ExtPayBaseURL":
+		setting.ExtPayBaseURL = value
+	case "ExtPayAppId":
+		setting.ExtPayAppId = value
+	case "ExtPaySecret":
+		setting.ExtPaySecret = value
+	case "ExtPayNotifyURL":
+		setting.ExtPayNotifyURL = value
+	case "ExtPayReturnURL":
+		setting.ExtPayReturnURL = value
+	case "ExtPayMinTopUp":
+		setting.ExtPayMinTopUp, _ = strconv.Atoi(value)
+	case "ExtPayQueryIntervalSeconds":
+		setting.ExtPayQueryIntervalSeconds, _ = strconv.Atoi(value)
+	case "ExtPayQueryTimeoutSeconds":
+		setting.ExtPayQueryTimeoutSeconds, _ = strconv.Atoi(value)
 	case "CreemApiKey":
 		setting.CreemApiKey = value
 	case "CreemProducts":
