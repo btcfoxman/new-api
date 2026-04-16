@@ -88,9 +88,9 @@ func GetTopUpInfo(c *gin.Context) {
 		}
 		if !hasExtPay {
 			extPayMethod := map[string]string{
-				"name":      "External Pay",
+				"name":      "支付宝",
 				"type":      service.ExtPayMethodType,
-				"color":     "rgba(var(--semi-green-5), 1)",
+				"color":     "rgba(var(--semi-black-5), 1)",
 				"min_topup": strconv.FormatInt(service.GetExtPayMinTopUp(), 10),
 			}
 			payMethods = append(payMethods, extPayMethod)

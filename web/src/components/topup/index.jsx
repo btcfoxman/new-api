@@ -493,24 +493,43 @@ const TopUp = () => {
           // 如果启用了 Stripe 支付，添加到支付方法列表
           // 这个逻辑现在由后端处理，如果 Stripe 启用，后端会在 pay_methods 中包含它
 
-          setPayMethods(payMethods);
+          const enableOnlineTopUp = data.enable_online_topup || false;
           const enableStripeTopUp = data.enable_stripe_topup || false;
           const enableExtPayTopUp = data.enable_extpay_topup || false;
-          const enableOnlineTopUp =
-            (data.enable_online_topup || false) || enableExtPayTopUp;
+          const enableWaffoTopUp = data.enable_waffo_topup || false;
+
+          payMethods = payMethods.filter((method) => {
+            if (method.type === 'waffo') {
+              return false;
+            }
+            if (method.type === 'stripe') {
+              return enableStripeTopUp;
+            }
+            if (method.type === 'extpay') {
+              return enableExtPayTopUp;
+            }
+            return enableOnlineTopUp;
+          });
+
+          setPayMethods(payMethods);
           const enableCreemTopUp = data.enable_creem_topup || false;
+          const extPayMethod = payMethods.find(
+            (method) => method.type === 'extpay',
+          );
+          const extPayMinTopUp = Number(extPayMethod?.min_topup) || data.min_topup || 1;
           const minTopUpValue = enableOnlineTopUp
             ? data.min_topup
+            : enableExtPayTopUp
+              ? extPayMinTopUp
             : enableStripeTopUp
               ? data.stripe_min_topup
-              : data.enable_waffo_topup
+              : enableWaffoTopUp
                 ? data.waffo_min_topup
                 : 1;
           setEnableOnlineTopUp(enableOnlineTopUp);
           setEnableExtPayTopUp(enableExtPayTopUp);
           setEnableStripeTopUp(enableStripeTopUp);
           setEnableCreemTopUp(enableCreemTopUp);
-          const enableWaffoTopUp = data.enable_waffo_topup || false;
           setEnableWaffoTopUp(enableWaffoTopUp);
           setWaffoPayMethods(data.waffo_pay_methods || []);
           setWaffoMinTopUp(data.waffo_min_topup || 1);
@@ -803,6 +822,7 @@ const TopUp = () => {
         <RechargeCard
           t={t}
           enableOnlineTopUp={enableOnlineTopUp}
+          enableExtPayTopUp={enableExtPayTopUp}
           enableStripeTopUp={enableStripeTopUp}
           enableCreemTopUp={enableCreemTopUp}
           creemProducts={creemProducts}
