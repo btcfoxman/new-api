@@ -62,6 +62,29 @@ var (
 	modelSupportEndpointsLock = sync.RWMutex{}
 )
 
+func mergeGroupPriceFromRules(
+	groupPriceMap map[string]float64,
+	groupRuleMap map[string]ratio_setting.TaskGroupPricingRule,
+) map[string]float64 {
+	if len(groupRuleMap) == 0 {
+		return groupPriceMap
+	}
+
+	if groupPriceMap == nil {
+		groupPriceMap = make(map[string]float64, len(groupRuleMap))
+	}
+
+	for group, rule := range groupRuleMap {
+		if rule.BasePrice == nil {
+			continue
+		}
+		if price, ok := groupPriceMap[group]; !ok || (price == 0 && *rule.BasePrice != 0) {
+			groupPriceMap[group] = *rule.BasePrice
+		}
+	}
+	return groupPriceMap
+}
+
 func GetPricing() []Pricing {
 	if time.Since(lastGetPricingTime) > time.Minute*1 || len(pricingMap) == 0 {
 		updatePricingLock.Lock()
@@ -294,11 +317,14 @@ func updatePricing() {
 			pricing.Tags = meta.Tags
 			pricing.VendorID = meta.VendorID
 		}
-		groupPriceMap := ratio_setting.GetModelPriceGroupMapForModel(model)
+		groupRuleMap := ratio_setting.GetTaskGroupPricingRuleMapForModel(model)
+		groupPriceMap := mergeGroupPriceFromRules(
+			ratio_setting.GetModelPriceGroupMapForModel(model),
+			groupRuleMap,
+		)
 		if len(groupPriceMap) > 0 {
 			pricing.GroupModelPrice = groupPriceMap
 		}
-		groupRuleMap := ratio_setting.GetTaskGroupPricingRuleMapForModel(model)
 		if len(groupRuleMap) > 0 {
 			pricing.GroupPricingRule = groupRuleMap
 		}
