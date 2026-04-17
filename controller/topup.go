@@ -158,7 +158,18 @@ func getPayMoney(amount int64, group string) float64 {
 	}
 
 	dTopupGroupRatio := decimal.NewFromFloat(topupGroupRatio)
-	dPrice := decimal.NewFromFloat(operation_setting.Price)
+	rechargeRate := operation_setting.Price
+	switch operation_setting.GetQuotaDisplayType() {
+	case operation_setting.QuotaDisplayTypeUSD:
+		rechargeRate = 1
+	case operation_setting.QuotaDisplayTypeCustom:
+		if operation_setting.GetGeneralSetting().CustomCurrencyExchangeRate > 0 {
+			rechargeRate = operation_setting.GetGeneralSetting().CustomCurrencyExchangeRate
+		} else {
+			rechargeRate = 1
+		}
+	}
+	dPrice := decimal.NewFromFloat(rechargeRate)
 	// apply optional preset discount by the original request amount (if configured), default 1.0
 	discount := 1.0
 	if ds, ok := operation_setting.GetPaymentSetting().AmountDiscount[int(amount)]; ok {

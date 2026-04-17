@@ -33,6 +33,7 @@ import { Modal, Toast } from '@douyinfe/semi-ui';
 import { useTranslation } from 'react-i18next';
 import { UserContext } from '../../context/User';
 import { StatusContext } from '../../context/Status';
+import { getCurrencyConfig } from '../../helpers/render';
 
 import RechargeCard from './RechargeCard';
 import InvitationCard from './InvitationCard';
@@ -438,6 +439,21 @@ const TopUp = () => {
       const res = await API.get('/api/user/topup/info');
       const { message, data, success } = res.data;
       if (success) {
+        let storedStatus = {};
+        try {
+          storedStatus = JSON.parse(localStorage.getItem('status') || '{}');
+        } catch (e) {}
+        const statusSnapshot = statusState?.status || {};
+        const mergedStatus = {
+          ...storedStatus,
+          ...statusSnapshot,
+          quota_display_type:
+            statusSnapshot.quota_display_type ||
+            storedStatus.quota_display_type ||
+            localStorage.getItem('quota_display_type') ||
+            'USD',
+        };
+        setPriceRatio(resolveTopupPriceRatio(mergedStatus));
         setTopupInfo({
           amount_options: data.amount_options || [],
           discount: data.discount || {},
@@ -642,14 +658,18 @@ const TopUp = () => {
       // setMinTopUp(minTopUpValue);
       // setTopUpCount(minTopUpValue);
       setTopUpLink(statusState.status.top_up_link || '');
-      setPriceRatio(statusState.status.price || 1);
+      setPriceRatio(resolveTopupPriceRatio(statusState.status));
 
       setStatusLoading(false);
     }
   }, [statusState?.status]);
 
   const renderAmount = () => {
-    return amount + ' ' + t('元');
+    const { symbol, type } = getCurrencyConfig();
+    if (type === 'TOKENS') {
+      return `${amount}`;
+    }
+    return `${symbol}${Number(amount || 0).toFixed(2)}`;
   };
 
   const getAmount = async (value) => {
@@ -880,3 +900,13 @@ const TopUp = () => {
 };
 
 export default TopUp;
+  const resolveTopupPriceRatio = (status) => {
+    const quotaDisplayType = status?.quota_display_type || 'USD';
+    if (quotaDisplayType === 'CUSTOM') {
+      return Number(status?.custom_currency_exchange_rate) || 1;
+    }
+    if (quotaDisplayType === 'USD') {
+      return 1;
+    }
+    return Number(status?.price) || 1;
+  };
