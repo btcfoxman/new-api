@@ -187,6 +187,38 @@ func (a *TaskAdaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, req
 	return channel.DoTaskApiRequest(a, c, info, requestBody)
 }
 
+func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInfo) map[string]float64 {
+	req, err := relaycommon.GetTaskRequest(c)
+	if err != nil {
+		return nil
+	}
+	payload, err := a.convertToRequestPayload(&req, info)
+	if err != nil {
+		return nil
+	}
+	units := estimateKlingUnitDeduction(payload, req.Metadata)
+	if units <= 0 {
+		return nil
+	}
+	return map[string]float64{
+		"kling_units": units,
+	}
+}
+
+func (a *TaskAdaptor) AdjustBillingOnSubmit(_ *relaycommon.RelayInfo, taskData []byte) map[string]float64 {
+	var payload responsePayload
+	if err := common.Unmarshal(taskData, &payload); err != nil {
+		return nil
+	}
+	units, err := strconv.ParseFloat(payload.Data.FinalUnitDeduction, 64)
+	if err != nil || units <= 0 {
+		return nil
+	}
+	return map[string]float64{
+		"kling_units": units,
+	}
+}
+
 // DoResponse handles upstream response, returns taskID etc.
 func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (taskID string, taskData []byte, taskErr *dto.TaskError) {
 	responseBody, err := io.ReadAll(resp.Body)
@@ -299,6 +331,115 @@ func (a *TaskAdaptor) getAspectRatio(size string) string {
 		return "9:16"
 	default:
 		return "1:1"
+	}
+}
+
+func estimateKlingUnitDeduction(payload *requestPayload, metadata map[string]any) float64 {
+	if payload == nil {
+		return 0
+	}
+	modelName := strings.TrimSpace(strings.ToLower(payload.ModelName))
+	mode := strings.TrimSpace(strings.ToLower(payload.Mode))
+	if mode == "" {
+		mode = "std"
+	}
+	duration, err := strconv.Atoi(strings.TrimSpace(payload.Duration))
+	if err != nil || duration <= 0 {
+		duration = 5
+	}
+
+	soundOn := metadataFlagIsOn(metadata, "sound") || metadataFlagIsOn(metadata, "audio_generation")
+	hasVoice := hasVoiceList(metadata) && strings.Contains(strings.ToLower(payload.Prompt), "<<<voice_")
+
+	switch modelName {
+	case "kling-v1":
+		return klingLegacyUnits(mode, duration, 1.0, 3.5)
+	case "kling-v1-5":
+		return klingLegacyUnits(mode, duration, 2.0, 3.5)
+	case "kling-v1-6":
+		return klingLegacyUnits(mode, duration, 2.0, 3.5)
+	case "kling-v2-master", "kling-v2-1-master":
+		return 10.0 * float64(duration) / 5.0
+	case "kling-v2-1":
+		return klingLegacyUnits(mode, duration, 2.0, 3.5)
+	case "kling-v2-5-turbo":
+		return klingLegacyUnits(mode, duration, 1.5, 2.5)
+	case "kling-v2-6":
+		switch mode {
+		case "std":
+			return 1.5 * float64(duration) / 5.0
+		case "pro":
+			switch {
+			case soundOn && hasVoice:
+				return 6.0 * float64(duration) / 5.0
+			case soundOn:
+				return 5.0 * float64(duration) / 5.0
+			default:
+				return 2.5 * float64(duration) / 5.0
+			}
+		default:
+			return 1.5 * float64(duration) / 5.0
+		}
+	case "kling-v3":
+		basePerSecond := 0.6
+		if mode == "pro" {
+			basePerSecond = 0.8
+		}
+		if soundOn {
+			if mode == "pro" {
+				basePerSecond = 1.2
+			} else {
+				basePerSecond = 0.9
+			}
+		}
+		return basePerSecond * float64(duration)
+	default:
+		return 0
+	}
+}
+
+func klingLegacyUnits(mode string, duration int, std5s float64, pro5s float64) float64 {
+	base := std5s
+	if mode == "pro" {
+		base = pro5s
+	}
+	return base * float64(duration) / 5.0
+}
+
+func metadataFlagIsOn(metadata map[string]any, key string) bool {
+	if metadata == nil {
+		return false
+	}
+	value, ok := metadata[key]
+	if !ok || value == nil {
+		return false
+	}
+	switch v := value.(type) {
+	case string:
+		lower := strings.TrimSpace(strings.ToLower(v))
+		return lower == "on" || lower == "yes" || lower == "true" || lower == "enabled"
+	case bool:
+		return v
+	default:
+		return false
+	}
+}
+
+func hasVoiceList(metadata map[string]any) bool {
+	if metadata == nil {
+		return false
+	}
+	value, ok := metadata["voice_list"]
+	if !ok || value == nil {
+		return false
+	}
+	switch v := value.(type) {
+	case []any:
+		return len(v) > 0
+	case []string:
+		return len(v) > 0
+	default:
+		return false
 	}
 }
 

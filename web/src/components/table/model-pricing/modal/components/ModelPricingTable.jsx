@@ -59,6 +59,208 @@ const ModelPricingTable = ({
     return 'white';
   };
 
+  const getGroupRule = (group) => {
+    const ruleMap = modelData?.group_pricing_rule;
+    if (!ruleMap || typeof ruleMap !== 'object') return null;
+    return ruleMap[String(group || '').trim().toLowerCase()] || null;
+  };
+
+  const getMatrixConfig = (group) => {
+    const dimensions = getGroupRule(group)?.dimensions;
+    if (!dimensions || dimensions.mode !== 'matrix') return null;
+    if (!Array.isArray(dimensions.headers) || !Array.isArray(dimensions.rows)) {
+      return null;
+    }
+    if (!Array.isArray(dimensions.prices) || dimensions.rows.length === 0) {
+      return null;
+    }
+    return dimensions;
+  };
+
+  const getDimensionConfig = (group) => {
+    const dimensions = getGroupRule(group)?.dimensions;
+    if (!dimensions || typeof dimensions !== 'object') return null;
+    if (dimensions.mode === 'matrix') return null;
+    const hasResolution =
+      dimensions.mode === 'resolution' &&
+      dimensions.resolution_prices &&
+      typeof dimensions.resolution_prices === 'object' &&
+      Object.keys(dimensions.resolution_prices).length > 0;
+    const hasDuration =
+      dimensions.mode === 'duration' &&
+      dimensions.duration_prices &&
+      typeof dimensions.duration_prices === 'object' &&
+      Object.keys(dimensions.duration_prices).length > 0;
+    if (!hasResolution && !hasDuration) return null;
+    return dimensions;
+  };
+
+  const formatMatrixPrice = (rawPrice, priceUnit, ratioValue) => {
+    const numeric = Number(rawPrice);
+    if (!Number.isFinite(numeric)) return '-';
+    const finalValue = numeric * (Number(ratioValue) || 1);
+    const text = finalValue.toFixed(3);
+    if (priceUnit === 'per_second') {
+      return `${t('每秒')} ${text}`;
+    }
+    return text;
+  };
+
+  const formatDimensionPrice = (rawPrice, ratioValue, suffix = '') => {
+    const numeric = Number(rawPrice);
+    if (!Number.isFinite(numeric)) return '-';
+    const finalValue = numeric * (Number(ratioValue) || 1);
+    return `${finalValue.toFixed(3)}${suffix}`;
+  };
+
+  const renderSmallText = (value, highlight = false) => (
+    <span
+      style={{ fontSize: 10 }}
+      className={highlight ? 'font-semibold text-orange-600' : ''}
+    >
+      {value || '-'}
+    </span>
+  );
+
+  const renderMatrixTable = (group, ratioValue) => {
+    const matrix = getMatrixConfig(group);
+    if (!matrix) return null;
+
+    const headers = matrix.headers.map((header, index) => ({
+      title: renderSmallText(header),
+      dataIndex: `col_${index}`,
+      key: `col_${index}`,
+      render: (value) => renderSmallText(value || '-'),
+    }));
+
+    headers.push({
+      title: renderSmallText(t('价格')),
+      dataIndex: 'price_text',
+      key: 'price_text',
+      render: (value) => renderSmallText(value, true),
+    });
+
+    const rows = matrix.rows.map((row, index) => {
+      const record = { key: `${group}-${index}` };
+      row.forEach((value, colIndex) => {
+        record[`col_${colIndex}`] = value;
+      });
+      record.price_text = formatMatrixPrice(
+        matrix.prices[index],
+        Array.isArray(matrix.price_units) ? matrix.price_units[index] : 'per_call',
+        ratioValue,
+      );
+      return record;
+    });
+
+    return (
+      <div className='mt-3' style={{ fontSize: 10 }}>
+        <Table
+          dataSource={rows}
+          columns={headers}
+          pagination={false}
+          size='small'
+          bordered={false}
+          className='!rounded-lg'
+        />
+      </div>
+    );
+  };
+
+  const renderDimensionTable = (group, ratioValue) => {
+    const dimensions = getDimensionConfig(group);
+    if (!dimensions) return null;
+
+    if (dimensions.mode === 'resolution') {
+      const rows = Object.entries(dimensions.resolution_prices || {}).map(
+        ([resolution, price]) => ({
+          key: `${group}-resolution-${resolution}`,
+          dimension: resolution,
+          priceText: formatDimensionPrice(price, ratioValue),
+        }),
+      );
+      return (
+        <div className='mt-3' style={{ fontSize: 10 }}>
+          <Table
+            dataSource={rows}
+            columns={[
+              {
+                title: renderSmallText(t('分辨率')),
+                dataIndex: 'dimension',
+                key: 'dimension',
+                render: (value) => renderSmallText(value),
+              },
+              {
+                title: renderSmallText(t('价格')),
+                dataIndex: 'priceText',
+                key: 'priceText',
+                render: (value) => renderSmallText(value, true),
+              },
+            ]}
+            pagination={false}
+            size='small'
+            bordered={false}
+            className='!rounded-lg'
+          />
+        </div>
+      );
+    }
+
+    if (dimensions.mode === 'duration') {
+      const multiplierMap =
+        dimensions.resolution_multiplier &&
+        typeof dimensions.resolution_multiplier === 'object'
+          ? dimensions.resolution_multiplier
+          : {};
+      const rows = Object.entries(dimensions.duration_prices || {}).map(
+        ([duration, price]) => ({
+          key: `${group}-duration-${duration}`,
+          dimension: `${duration}s`,
+          priceText: formatDimensionPrice(price, ratioValue),
+          multiplierText:
+            Object.keys(multiplierMap).length > 0
+              ? Object.entries(multiplierMap)
+                  .map(([resolution, multiplier]) => `${resolution} x${multiplier}`)
+                  .join(' / ')
+              : '-',
+        }),
+      );
+      return (
+        <div className='mt-3' style={{ fontSize: 10 }}>
+          <Table
+            dataSource={rows}
+            columns={[
+              {
+                title: renderSmallText(t('时长')),
+                dataIndex: 'dimension',
+                key: 'dimension',
+                render: (value) => renderSmallText(value),
+              },
+              {
+                title: renderSmallText(t('价格')),
+                dataIndex: 'priceText',
+                key: 'priceText',
+                render: (value) => renderSmallText(value, true),
+              },
+              {
+                title: renderSmallText(t('分辨率倍率')),
+                dataIndex: 'multiplierText',
+                key: 'multiplierText',
+                render: (value) => renderSmallText(value),
+              },
+            ]}
+            pagination={false}
+            size='small'
+            bordered={false}
+            className='!rounded-lg'
+          />
+        </div>
+      );
+    }
+
+    return null;
+  };
+
   const renderGroupPriceTable = () => {
     // 仅展示模型可用的分组：模型 enable_groups 与用户可用分组的交集
     const availableGroups = Object.keys(usableGroup || {})
@@ -105,6 +307,8 @@ const ModelPricingTable = ({
         billingMode,
         billingType: billingModeLabel(billingMode),
         priceItems,
+        matrixTable: renderMatrixTable(group, groupRatioValue),
+        dimensionTable: renderDimensionTable(group, groupRatioValue),
       };
     });
 
@@ -152,18 +356,26 @@ const ModelPricingTable = ({
     columns.push({
       title: siteDisplayType === 'TOKENS' ? t('计费摘要') : t('价格摘要'),
       dataIndex: 'priceItems',
-      render: (items) => (
-        <div className='space-y-1'>
-          {items.map((item) => (
-            <div key={item.key}>
-              <div className='font-semibold text-orange-600'>
-                {item.label} {item.value}
-              </div>
-              <div className='text-xs text-gray-500'>{item.suffix}</div>
-            </div>
-          ))}
-        </div>
-      ),
+      render: (items, record) => {
+        const hasDimensionTable = Boolean(
+          record?.matrixTable || record?.dimensionTable,
+        );
+        return (
+          <div className='space-y-1'>
+            {!hasDimensionTable &&
+              items.map((item) => (
+                <div key={item.key}>
+                  <div className='font-semibold text-orange-600'>
+                    {item.label} {item.value}
+                  </div>
+                  <div className='text-xs text-gray-500'>{item.suffix}</div>
+                </div>
+              ))}
+            {record?.matrixTable}
+            {record?.dimensionTable}
+          </div>
+        );
+      },
     });
 
     return (
