@@ -7,6 +7,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -214,6 +215,15 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		writer.Close()
 		c.Request.Header.Set("Content-Type", writer.FormDataContentType())
 		return &buf, nil
+	}
+
+	if strings.Contains(contentType, gin.MIMEPOSTForm) {
+		values, err := url.ParseQuery(string(cachedBody))
+		if err != nil {
+			return bytes.NewReader(cachedBody), nil
+		}
+		values.Set("model", info.UpstreamModelName)
+		return strings.NewReader(values.Encode()), nil
 	}
 
 	return common.ReaderOnly(storage), nil
