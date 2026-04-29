@@ -114,7 +114,7 @@ func UnmarshalBodyReusable(c *gin.Context, v any) error {
 	if err != nil {
 		return err
 	}
-	contentType := c.Request.Header.Get("Content-Type")
+	contentType := strings.ToLower(c.Request.Header.Get("Content-Type"))
 	if strings.HasPrefix(contentType, "application/json") {
 		err = Unmarshal(requestBody, v)
 	} else if strings.Contains(contentType, gin.MIMEPOSTForm) {

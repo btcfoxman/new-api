@@ -20,7 +20,7 @@ func TestBuildRequestBodyRewritesURLEncodedModel(t *testing.T) {
 
 	body := "model=sora-2&prompt=test+prompt&seconds=12&size=720x1280"
 	req := httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded;charset=UTF-8")
+	req.Header.Set("Content-Type", "Application/X-WWW-Form-Urlencoded; charset=UTF-8")
 	c.Request = req
 
 	adaptor := &TaskAdaptor{}

@@ -153,7 +153,7 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	if err != nil {
 		return nil, errors.Wrap(err, "read_body_bytes_failed")
 	}
-	contentType := c.GetHeader("Content-Type")
+	contentType := strings.ToLower(c.GetHeader("Content-Type"))
 
 	if strings.HasPrefix(contentType, "application/json") {
 		var bodyMap map[string]interface{}
