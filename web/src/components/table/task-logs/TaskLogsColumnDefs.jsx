@@ -233,6 +233,20 @@ const renderStatus = (type, t) => {
   }
 };
 
+const getOriginModelName = (properties) => {
+  if (!properties) {
+    return '';
+  }
+  if (typeof properties === 'string') {
+    try {
+      return JSON.parse(properties)?.origin_model_name || '';
+    } catch {
+      return '';
+    }
+  }
+  return properties.origin_model_name || '';
+};
+
 export const getTaskLogsColumns = ({
   t,
   COLUMN_KEYS,
@@ -301,33 +315,28 @@ export const getTaskLogsColumns = ({
         const displayText = String(record.username || userId || '?');
         return (
           <Space>
-            <Avatar
-              size='extra-small'
-              color={stringToColor(displayText)}
-            >
+            <Avatar size='extra-small' color={stringToColor(displayText)}>
               {displayText.slice(0, 1)}
             </Avatar>
-            <Typography.Text>
-              {displayText}
-            </Typography.Text>
+            <Typography.Text>{displayText}</Typography.Text>
           </Space>
         );
       },
     },
     {
-      key: COLUMN_KEYS.PLATFORM,
-      title: t('平台'),
-      dataIndex: 'platform',
-      render: (text, record, index) => {
-        return <div>{renderPlatform(text, t)}</div>;
-      },
-    },
-    {
-      key: COLUMN_KEYS.TYPE,
-      title: t('类型'),
-      dataIndex: 'action',
-      render: (text, record, index) => {
-        return <div>{renderType(text, t)}</div>;
+      key: COLUMN_KEYS.REQUEST_MODEL,
+      title: t('请求模型'),
+      dataIndex: 'properties',
+      render: (properties) => {
+        const originModelName = getOriginModelName(properties);
+        if (!originModelName) {
+          return '-';
+        }
+        return (
+          <Typography.Text ellipsis={{ showTooltip: true }}>
+            {originModelName}
+          </Typography.Text>
+        );
       },
     },
     {
@@ -416,7 +425,8 @@ export const getTaskLogsColumns = ({
           record.action === TASK_ACTION_REMIX_GENERATE;
         const isSuccess = record.status === 'SUCCESS';
         const resultUrl = record.result_url;
-        const hasResultUrl = typeof resultUrl === 'string' && /^https?:\/\//.test(resultUrl);
+        const hasResultUrl =
+          typeof resultUrl === 'string' && /^https?:\/\//.test(resultUrl);
         if (isSuccess && isVideoTask && hasResultUrl) {
           return (
             <a

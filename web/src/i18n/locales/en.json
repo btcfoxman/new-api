@@ -2892,6 +2892,7 @@
     "请求失败": "Request failed",
     "请求头覆盖": "Request header override",
     "请求并计费模型": "Request and charge model",
+    "请求模型": "Request Model",
     "请求时长: ${time}s": "Request time: ${time}s",
     "请求次数": "Number of Requests",
     "请求结束后多退少补": "Adjust after request completion",

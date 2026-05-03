@@ -3239,6 +3239,7 @@
     "请求头": "Tiêu đề yêu cầu",
     "请求头覆盖": "Ghi đè tiêu đề yêu cầu",
     "请求并计费模型": "Mô hình yêu cầu và tính phí",
+    "请求模型": "Mô hình yêu cầu",
     "请求成功": "Yêu cầu thành công",
     "请求成功！": "Yêu cầu thành công!",
     "请求时长: ${time}s": "Thời gian yêu cầu: ${time}s",

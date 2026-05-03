@@ -41,8 +41,9 @@ export const useTaskLogsData = () => {
     DURATION: 'duration',
     CHANNEL: 'channel',
     USERNAME: 'username',
-    PLATFORM: 'platform',
-    TYPE: 'type',
+    // PLATFORM: 'platform',
+    // TYPE: 'type',
+    REQUEST_MODEL: 'request_model',
     TASK_ID: 'task_id',
     TASK_STATUS: 'task_status',
     PROGRESS: 'progress',
@@ -108,7 +109,11 @@ export const useTaskLogsData = () => {
       try {
         const parsed = JSON.parse(savedColumns);
         const defaults = getDefaultColumnVisibility();
-        const merged = { ...defaults, ...parsed };
+        const validColumnKeys = new Set(Object.keys(defaults));
+        const saved = Object.fromEntries(
+          Object.entries(parsed).filter(([key]) => validColumnKeys.has(key)),
+        );
+        const merged = { ...defaults, ...saved };
 
         // For non-admin users, force-hide admin-only columns (does not touch admin settings)
         if (!isAdminUser) {
@@ -133,8 +138,9 @@ export const useTaskLogsData = () => {
       [COLUMN_KEYS.DURATION]: true,
       [COLUMN_KEYS.CHANNEL]: isAdminUser,
       [COLUMN_KEYS.USERNAME]: isAdminUser,
-      [COLUMN_KEYS.PLATFORM]: true,
-      [COLUMN_KEYS.TYPE]: true,
+      // [COLUMN_KEYS.PLATFORM]: true,
+      // [COLUMN_KEYS.TYPE]: true,
+      [COLUMN_KEYS.REQUEST_MODEL]: true,
       [COLUMN_KEYS.TASK_ID]: true,
       [COLUMN_KEYS.TASK_STATUS]: true,
       [COLUMN_KEYS.PROGRESS]: true,
