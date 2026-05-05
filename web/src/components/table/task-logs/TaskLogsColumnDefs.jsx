@@ -324,6 +324,22 @@ export const getTaskLogsColumns = ({
       },
     },
     {
+      key: COLUMN_KEYS.PLATFORM,
+      title: t('平台'),
+      dataIndex: 'platform',
+      render: (text) => {
+        return <div>{renderPlatform(text, t)}</div>;
+      },
+    },
+    {
+      key: COLUMN_KEYS.TYPE,
+      title: t('类型'),
+      dataIndex: 'action',
+      render: (text) => {
+        return <div>{renderType(text, t)}</div>;
+      },
+    },
+    {
       key: COLUMN_KEYS.REQUEST_MODEL,
       title: t('请求模型'),
       dataIndex: 'properties',
