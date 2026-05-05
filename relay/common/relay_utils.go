@@ -78,6 +78,73 @@ func validatePrompt(prompt string) *dto.TaskError {
 	return nil
 }
 
+var taskImageLikeFields = []string{
+	"image",
+	"image_url",
+	"image_urls",
+	"images",
+	"reference_images",
+	"input_reference",
+	"end_image_url",
+	"last_image_url",
+}
+
+func hasNonEmptyTaskImageValue(value any) bool {
+	switch typed := value.(type) {
+	case string:
+		return strings.TrimSpace(typed) != ""
+	case []string:
+		for _, item := range typed {
+			if hasNonEmptyTaskImageValue(item) {
+				return true
+			}
+		}
+		return false
+	case []any:
+		for _, item := range typed {
+			if hasNonEmptyTaskImageValue(item) {
+				return true
+			}
+		}
+		return false
+	case map[string]any:
+		for _, item := range typed {
+			if hasNonEmptyTaskImageValue(item) {
+				return true
+			}
+		}
+		return false
+	default:
+		return false
+	}
+}
+
+func hasTaskImageLikeInput(c *gin.Context, req TaskSubmitReq) bool {
+	if req.HasImage() || strings.TrimSpace(req.Image) != "" || strings.TrimSpace(req.InputReference) != "" {
+		return true
+	}
+	if c == nil || c.Request == nil {
+		return false
+	}
+
+	for _, field := range taskImageLikeFields {
+		if values, ok := c.Request.PostForm[field]; ok && hasNonEmptyTaskImageValue(values) {
+			return true
+		}
+	}
+
+	var rawReq map[string]any
+	if err := common.UnmarshalBodyReusable(c, &rawReq); err != nil {
+		return false
+	}
+	for _, field := range taskImageLikeFields {
+		if hasNonEmptyTaskImageValue(rawReq[field]) {
+			return true
+		}
+	}
+	return false
+}
+
 func validateMultipartTaskRequest(c *gin.Context, info *RelayInfo, action string) (TaskSubmitReq, error) {
 	var req TaskSubmitReq
 	if _, err := c.MultipartForm(); err != nil {
@@ -145,7 +212,7 @@ func ValidateMultipartDirect(c *gin.Context, info *RelayInfo) *dto.TaskError {
 		return createTaskError(fmt.Errorf("model field is required"), "missing_model", http.StatusBadRequest, true)
 	}
 
-	if req.HasImage() {
+	if hasTaskImageLikeInput(c, req) {
 		hasInputReference = true
 	}
 
@@ -217,6 +284,10 @@ func ValidateBasicTaskRequest(c *gin.Context, info *RelayInfo, action string) *d
 	if len(req.Images) == 0 && strings.TrimSpace(req.Image) != "" {
 		// 兼容单图上传
 		req.Images = []string{req.Image}
+	}
+
+	if action == constant.TaskActionTextGenerate && hasTaskImageLikeInput(c, req) {
+		action = constant.TaskActionGenerate
 	}
 
 	storeTaskRequest(c, info, action, req)
