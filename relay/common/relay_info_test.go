@@ -75,6 +75,10 @@ func TestValidateBasicTaskRequestTreatsImageLikeFieldsAsGenerate(t *testing.T) {
 			name: "input_reference",
 			body: `{"prompt":"p","model":"m","input_reference":"https://example.com/input.png"}`,
 		},
+		{
+			name: "content image_url",
+			body: `{"prompt":"p","model":"m","content":[{"type":"image_url","image_url":{"url":"https://example.com/content.png"}}]}`,
+		},
 	}
 
 	for _, tc := range cases {
@@ -91,4 +95,29 @@ func TestValidateBasicTaskRequestTreatsImageLikeFieldsAsGenerate(t *testing.T) {
 			require.Equal(t, constant.TaskActionGenerate, info.Action)
 		})
 	}
+}
+
+func TestValidateBasicTaskRequestFillsPromptFromContentText(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	req := httptest.NewRequest(http.MethodPost, "/api/v3/contents/generations/tasks", strings.NewReader(`{
+		"model": "doubao-video",
+		"content": [
+			{"type": "image_url", "image_url": {"url": "https://example.com/input.png"}},
+			{"type": "text", "text": "draw this image"}
+		]
+	}`))
+	req.Header.Set("Content-Type", "application/json")
+	c.Request = req
+
+	info := &RelayInfo{TaskRelayInfo: &TaskRelayInfo{}}
+	taskErr := ValidateBasicTaskRequest(c, info, constant.TaskActionGenerate)
+	require.Nil(t, taskErr)
+
+	storedReq, err := GetTaskRequest(c)
+	require.NoError(t, err)
+	require.Equal(t, "draw this image", storedReq.Prompt)
+	require.Len(t, storedReq.Content, 2)
 }

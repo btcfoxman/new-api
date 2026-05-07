@@ -667,20 +667,72 @@ type TaskRelayInfo struct {
 }
 
 type TaskSubmitReq struct {
-	Prompt         string                 `json:"prompt"`
-	Model          string                 `json:"model,omitempty"`
-	Mode           string                 `json:"mode,omitempty"`
-	Image          string                 `json:"image,omitempty"`
-	Images         []string               `json:"images,omitempty"`
-	Size           string                 `json:"size,omitempty"`
-	Duration       int                    `json:"duration,omitempty"`
-	Seconds        string                 `json:"seconds,omitempty"`
-	InputReference string                 `json:"input_reference,omitempty"`
-	Metadata       map[string]interface{} `json:"metadata,omitempty"`
+	Prompt         string                   `json:"prompt"`
+	Model          string                   `json:"model,omitempty"`
+	Mode           string                   `json:"mode,omitempty"`
+	Image          string                   `json:"image,omitempty"`
+	Images         []string                 `json:"images,omitempty"`
+	Content        []map[string]interface{} `json:"content,omitempty"`
+	Size           string                   `json:"size,omitempty"`
+	Duration       int                      `json:"duration,omitempty"`
+	Seconds        string                   `json:"seconds,omitempty"`
+	InputReference string                   `json:"input_reference,omitempty"`
+	Metadata       map[string]interface{}   `json:"metadata,omitempty"`
 }
 
 func (t *TaskSubmitReq) GetPrompt() string {
 	return t.Prompt
+}
+
+func (t *TaskSubmitReq) FillPromptFromContent() {
+	if t == nil || strings.TrimSpace(t.Prompt) != "" {
+		return
+	}
+	if prompt := extractTaskPromptFromContent(t.Content); prompt != "" {
+		t.Prompt = prompt
+		return
+	}
+	if t.Metadata != nil {
+		if prompt := extractTaskPromptFromContent(t.Metadata["content"]); prompt != "" {
+			t.Prompt = prompt
+		}
+	}
+}
+
+func extractTaskPromptFromContent(content any) string {
+	var parts []string
+	switch typed := content.(type) {
+	case []map[string]interface{}:
+		for _, item := range typed {
+			if text, ok := extractTaskPromptPart(item); ok {
+				parts = append(parts, text)
+			}
+		}
+	case []interface{}:
+		for _, item := range typed {
+			if text, ok := extractTaskPromptPart(item); ok {
+				parts = append(parts, text)
+			}
+		}
+	}
+	return strings.Join(parts, "\n")
+}
+
+func extractTaskPromptPart(item any) (string, bool) {
+	itemMap, ok := item.(map[string]interface{})
+	if !ok {
+		return "", false
+	}
+	itemType, _ := itemMap["type"].(string)
+	if !strings.EqualFold(strings.TrimSpace(itemType), "text") {
+		return "", false
+	}
+	text, _ := itemMap["text"].(string)
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return "", false
+	}
+	return text, true
 }
 
 func (t *TaskSubmitReq) HasImage() bool {

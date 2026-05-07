@@ -123,6 +123,12 @@ func hasTaskImageLikeInput(c *gin.Context, req TaskSubmitReq) bool {
 	if req.HasImage() || strings.TrimSpace(req.Image) != "" || strings.TrimSpace(req.InputReference) != "" {
 		return true
 	}
+	if hasTaskContentMediaInput(req.Content) {
+		return true
+	}
+	if req.Metadata != nil && hasTaskContentMediaInput(req.Metadata["content"]) {
+		return true
+	}
 	if c == nil || c.Request == nil {
 		return false
 	}
@@ -143,6 +149,39 @@ func hasTaskImageLikeInput(c *gin.Context, req TaskSubmitReq) bool {
 		}
 	}
 	return false
+}
+
+func hasTaskContentMediaInput(content any) bool {
+	switch typed := content.(type) {
+	case []map[string]interface{}:
+		for _, item := range typed {
+			if taskContentItemHasMedia(item) {
+				return true
+			}
+		}
+	case []interface{}:
+		for _, item := range typed {
+			if taskContentItemHasMedia(item) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func taskContentItemHasMedia(item any) bool {
+	itemMap, ok := item.(map[string]interface{})
+	if !ok {
+		return false
+	}
+	for _, field := range []string{"image_url", "video_url", "audio_url"} {
+		if hasNonEmptyTaskImageValue(itemMap[field]) {
+			return true
+		}
+	}
+	itemType, _ := itemMap["type"].(string)
+	return lo.Contains([]string{"image_url", "video_url", "audio_url"}, strings.ToLower(strings.TrimSpace(itemType))) &&
+		hasNonEmptyTaskImageValue(itemMap["url"])
 }
 
 func validateMultipartTaskRequest(c *gin.Context, info *RelayInfo, action string) (TaskSubmitReq, error) {
@@ -196,6 +235,7 @@ func ValidateMultipartDirect(c *gin.Context, info *RelayInfo) *dto.TaskError {
 	if err := common.UnmarshalBodyReusable(c, &req); err != nil {
 		return createTaskError(err, "invalid_json", http.StatusBadRequest, true)
 	}
+	req.FillPromptFromContent()
 
 	prompt = req.Prompt
 	model = req.Model
@@ -276,6 +316,7 @@ func ValidateBasicTaskRequest(c *gin.Context, info *RelayInfo, action string) *d
 	if err := common.UnmarshalBodyReusable(c, &req); err != nil {
 		return createTaskError(err, "invalid_request", http.StatusBadRequest, true)
 	}
+	req.FillPromptFromContent()
 
 	if taskErr := validatePrompt(req.Prompt); taskErr != nil {
 		return taskErr

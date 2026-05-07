@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -289,6 +290,9 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq) (*
 	if err := taskcommon.UnmarshalMetadata(metadata, &r); err != nil {
 		return nil, errors.Wrap(err, "unmarshal metadata failed")
 	}
+	if len(req.Content) > 0 {
+		r.Content = append(r.Content, convertTaskContentItems(req.Content)...)
+	}
 
 	if sec, _ := strconv.Atoi(req.Seconds); sec > 0 {
 		r.Duration = lo.ToPtr(dto.IntValue(sec))
@@ -301,6 +305,69 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq) (*
 	})
 
 	return &r, nil
+}
+
+func convertTaskContentItems(items []map[string]interface{}) []ContentItem {
+	contentItems := make([]ContentItem, 0, len(items))
+	for _, item := range items {
+		contentItem := ContentItem{
+			Type:     stringFromTaskContentValue(item["type"]),
+			Text:     stringFromTaskContentValue(item["text"]),
+			Role:     stringFromTaskContentValue(item["role"]),
+			ImageURL: mediaURLFromTaskContentValue(item["image_url"]),
+			VideoURL: mediaURLFromTaskContentValue(item["video_url"]),
+			AudioURL: mediaURLFromTaskContentValue(item["audio_url"]),
+		}
+		if contentItem.Type == "image_url" && contentItem.ImageURL == nil {
+			contentItem.ImageURL = mediaURLFromTaskContentValue(item["url"])
+		}
+		if contentItem.Type == "video_url" && contentItem.VideoURL == nil {
+			contentItem.VideoURL = mediaURLFromTaskContentValue(item["url"])
+		}
+		if contentItem.Type == "audio_url" && contentItem.AudioURL == nil {
+			contentItem.AudioURL = mediaURLFromTaskContentValue(item["url"])
+		}
+		if contentItem.Type == "" {
+			switch {
+			case contentItem.ImageURL != nil:
+				contentItem.Type = "image_url"
+			case contentItem.VideoURL != nil:
+				contentItem.Type = "video_url"
+			case contentItem.AudioURL != nil:
+				contentItem.Type = "audio_url"
+			case strings.TrimSpace(contentItem.Text) != "":
+				contentItem.Type = "text"
+			}
+		}
+		if contentItem.Type == "" && contentItem.Text == "" && contentItem.ImageURL == nil && contentItem.VideoURL == nil && contentItem.AudioURL == nil {
+			continue
+		}
+		contentItems = append(contentItems, contentItem)
+	}
+	return contentItems
+}
+
+func stringFromTaskContentValue(value any) string {
+	str, _ := value.(string)
+	return strings.TrimSpace(str)
+}
+
+func mediaURLFromTaskContentValue(value any) *MediaURL {
+	switch typed := value.(type) {
+	case string:
+		if url := strings.TrimSpace(typed); url != "" {
+			return &MediaURL{URL: url}
+		}
+	case map[string]interface{}:
+		if url := stringFromTaskContentValue(typed["url"]); url != "" {
+			return &MediaURL{URL: url}
+		}
+	case map[string]string:
+		if url := strings.TrimSpace(typed["url"]); url != "" {
+			return &MediaURL{URL: url}
+		}
+	}
+	return nil
 }
 
 func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, error) {
