@@ -32,6 +32,16 @@ type ImageRequest struct {
 	WatermarkEnabled json.RawMessage `json:"watermark_enabled,omitempty"`
 	UserId           json.RawMessage `json:"user_id,omitempty"`
 	Image            json.RawMessage `json:"image,omitempty"`
+	ImageURL         json.RawMessage `json:"image_url,omitempty"`
+	ImageURLs        json.RawMessage `json:"image_urls,omitempty"`
+	Images           json.RawMessage `json:"images,omitempty"`
+	ReferenceImage   json.RawMessage `json:"reference_image,omitempty"`
+	ReferenceImages  json.RawMessage `json:"reference_images,omitempty"`
+	InputReference   json.RawMessage `json:"input_reference,omitempty"`
+	InputImage       json.RawMessage `json:"input_image,omitempty"`
+	InputImages      json.RawMessage `json:"input_images,omitempty"`
+	ImageList        json.RawMessage `json:"image_list,omitempty"`
+	URLs             json.RawMessage `json:"urls,omitempty"`
 	// 用匿名参数接收额外参数
 	Extra map[string]json.RawMessage `json:"-"`
 }
