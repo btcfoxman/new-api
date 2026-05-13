@@ -2,6 +2,7 @@ package controller
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -47,5 +48,18 @@ func TestBuildTaskInputSnapshotFromMapSkipsEmptyValues(t *testing.T) {
 	})
 	if snapshot != "" {
 		t.Fatalf("snapshot = %q, want empty", snapshot)
+	}
+}
+
+func TestBuildTaskInputSnapshotFromMapTruncatesBase64Values(t *testing.T) {
+	payload := strings.Repeat("A", 400)
+	snapshot := buildTaskInputSnapshotFromMap(map[string]any{
+		"image": "data:image/png;base64," + payload,
+	})
+	if strings.Contains(snapshot, payload) {
+		t.Fatal("snapshot contains full base64 payload")
+	}
+	if !strings.Contains(snapshot, "...[truncated 370 chars]") {
+		t.Fatalf("snapshot missing truncation marker: %s", snapshot)
 	}
 }
