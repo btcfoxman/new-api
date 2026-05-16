@@ -2,7 +2,6 @@ package controller
 
 import (
 	"fmt"
-	"regexp"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -14,20 +13,25 @@ const (
 	taskInputSnapshotBase64MinChars     = 256
 )
 
-var (
-	taskInputSnapshotDataURIBase64Pattern = regexp.MustCompile(`(?i)data:[^,\s"']*;base64,[A-Za-z0-9+/=_-]{256,}`)
-	taskInputSnapshotLongBase64Pattern    = regexp.MustCompile(`[A-Za-z0-9+/=_-]{256,}`)
-)
-
 var taskInputSnapshotFields = []string{
 	"image",
 	"image_url",
 	"image_urls",
 	"images",
+	"image_references",
 	"reference_images",
+	"reference_image",
+	"reference_image_url",
 	"input_reference",
+	"start_image_url",
+	"first_image_url",
+	"first_frame_image",
+	"first_frame_image_url",
+	"end_image",
 	"end_image_url",
 	"last_image_url",
+	"last_frame_image",
+	"last_frame_image_url",
 }
 
 func buildTaskInputSnapshot(c *gin.Context) string {
@@ -84,23 +88,32 @@ func sanitizeTaskInputSnapshotValue(value any) any {
 }
 
 func truncateTaskInputSnapshotString(s string) string {
-	if len(s) < taskInputSnapshotBase64MinChars {
-		return s
+	if strings.Contains(strings.ToLower(s), ";base64,") {
+		return truncateTaskInputSnapshotPayload(s)
 	}
+	if isLikelyRawTaskInputSnapshotBase64(s) {
+		return truncateTaskInputSnapshotPayload(s)
+	}
+	return s
+}
 
-	s = taskInputSnapshotDataURIBase64Pattern.ReplaceAllStringFunc(s, func(token string) string {
-		comma := strings.IndexByte(token, ',')
-		if comma < 0 || comma+1 >= len(token) {
-			return truncateTaskInputSnapshotPayload(token)
+func isLikelyRawTaskInputSnapshotBase64(s string) bool {
+	s = strings.TrimSpace(s)
+	if len(s) < taskInputSnapshotBase64MinChars || strings.Contains(s, "://") {
+		return false
+	}
+	for _, r := range s {
+		switch {
+		case r >= 'A' && r <= 'Z':
+		case r >= 'a' && r <= 'z':
+		case r >= '0' && r <= '9':
+		case r == '+', r == '/', r == '=', r == '_', r == '-':
+		case r == '\r', r == '\n', r == '\t', r == ' ':
+		default:
+			return false
 		}
-		return token[:comma+1] + truncateTaskInputSnapshotPayload(token[comma+1:])
-	})
-	return taskInputSnapshotLongBase64Pattern.ReplaceAllStringFunc(s, func(token string) string {
-		if len(token) < taskInputSnapshotBase64MinChars {
-			return token
-		}
-		return truncateTaskInputSnapshotPayload(token)
-	})
+	}
+	return true
 }
 
 func truncateTaskInputSnapshotPayload(s string) string {

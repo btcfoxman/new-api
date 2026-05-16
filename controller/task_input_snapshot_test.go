@@ -59,7 +59,45 @@ func TestBuildTaskInputSnapshotFromMapTruncatesBase64Values(t *testing.T) {
 	if strings.Contains(snapshot, payload) {
 		t.Fatal("snapshot contains full base64 payload")
 	}
-	if !strings.Contains(snapshot, "...[truncated 370 chars]") {
+	if !strings.Contains(snapshot, "...[truncated 392 chars]") {
 		t.Fatalf("snapshot missing truncation marker: %s", snapshot)
+	}
+}
+
+func TestBuildTaskInputSnapshotFromMapTruncatesNestedBase64ImageFields(t *testing.T) {
+	payload := strings.Repeat("B", 360)
+	rawPayload := strings.Repeat("C", 320)
+	snapshot := buildTaskInputSnapshotFromMap(map[string]any{
+		"image_url": map[string]any{
+			"url": "data:image/jpeg;base64," + payload,
+		},
+		"image_references": []any{
+			map[string]any{"image_url": rawPayload},
+		},
+	})
+	if snapshot == "" {
+		t.Fatal("snapshot is empty")
+	}
+	if strings.Contains(snapshot, payload) {
+		t.Fatal("snapshot contains full nested data URI payload")
+	}
+	if strings.Contains(snapshot, rawPayload) {
+		t.Fatal("snapshot contains full nested raw base64 payload")
+	}
+	if !strings.Contains(snapshot, "...[truncated 353 chars]") {
+		t.Fatalf("snapshot missing data URI truncation marker: %s", snapshot)
+	}
+	if !strings.Contains(snapshot, "...[truncated 290 chars]") {
+		t.Fatalf("snapshot missing raw base64 truncation marker: %s", snapshot)
+	}
+}
+
+func TestBuildTaskInputSnapshotFromMapKeepsLongNonBase64ImageURL(t *testing.T) {
+	longURL := "https://example.com/image.png?token=" + strings.Repeat("A", 320)
+	snapshot := buildTaskInputSnapshotFromMap(map[string]any{
+		"image_url": longURL,
+	})
+	if !strings.Contains(snapshot, longURL) {
+		t.Fatalf("snapshot should keep normal image url: %s", snapshot)
 	}
 }
