@@ -40,6 +40,7 @@ type TaskDto struct {
 	ChannelId  int             `json:"channel_id"`
 	Quota      int             `json:"quota"`
 	Action     string          `json:"action"`
+	Prompt     string          `json:"prompt,omitempty"`
 	Status     string          `json:"status"`
 	FailReason string          `json:"fail_reason"`
 	ResultURL  string          `json:"result_url,omitempty"` // 任务结果 URL（视频地址等）

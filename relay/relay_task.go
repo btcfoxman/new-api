@@ -551,6 +551,7 @@ func TaskModel2Dto(task *model.Task) *dto.TaskDto {
 		ChannelId:  task.ChannelId,
 		Quota:      task.Quota,
 		Action:     task.Action,
+		Prompt:     task.Prompt,
 		Status:     string(task.Status),
 		FailReason: task.FailReason,
 		ResultURL:  task.GetResultURL(),

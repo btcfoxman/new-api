@@ -572,6 +572,7 @@ func RelayTask(c *gin.Context) {
 
 		task := model.InitTask(result.Platform, relayInfo)
 		task.Properties.Input = buildTaskInputSnapshot(c)
+		fillTaskPromptFromRequest(c, task)
 		task.PrivateData.UpstreamTaskID = result.UpstreamTaskID
 		task.PrivateData.BillingSource = relayInfo.BillingSource
 		task.PrivateData.SubscriptionId = relayInfo.SubscriptionId
@@ -595,6 +596,17 @@ func RelayTask(c *gin.Context) {
 	if taskErr != nil {
 		respondTaskError(c, taskErr)
 	}
+}
+
+func fillTaskPromptFromRequest(c *gin.Context, task *model.Task) {
+	if task == nil {
+		return
+	}
+	req, err := relaycommon.GetTaskRequest(c)
+	if err != nil {
+		return
+	}
+	task.Prompt = req.Prompt
 }
 
 // respondTaskError 统一输出 Task 错误响应（含 429 限流提示改写）
