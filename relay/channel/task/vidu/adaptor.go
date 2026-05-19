@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -27,16 +28,30 @@ import (
 // ============================
 
 type requestPayload struct {
-	Model             string   `json:"model"`
-	Images            []string `json:"images"`
-	Prompt            string   `json:"prompt,omitempty"`
-	Duration          int      `json:"duration,omitempty"`
-	Seed              int      `json:"seed,omitempty"`
-	Resolution        string   `json:"resolution,omitempty"`
-	MovementAmplitude string   `json:"movement_amplitude,omitempty"`
-	Bgm               bool     `json:"bgm,omitempty"`
-	Payload           string   `json:"payload,omitempty"`
-	CallbackUrl       string   `json:"callback_url,omitempty"`
+	Model             string           `json:"model"`
+	Images            []string         `json:"images,omitempty"`
+	Videos            []string         `json:"videos,omitempty"`
+	Subjects          []map[string]any `json:"subjects,omitempty"`
+	AutoSubjects      bool             `json:"auto_subjects,omitempty"`
+	Prompt            string           `json:"prompt,omitempty"`
+	Style             string           `json:"style,omitempty"`
+	Duration          int              `json:"duration,omitempty"`
+	Seed              int              `json:"seed,omitempty"`
+	AspectRatio       string           `json:"aspect_ratio,omitempty"`
+	Resolution        string           `json:"resolution,omitempty"`
+	MovementAmplitude string           `json:"movement_amplitude,omitempty"`
+	Bgm               bool             `json:"bgm,omitempty"`
+	Audio             bool             `json:"audio,omitempty"`
+	AudioType         string           `json:"audio_type,omitempty"`
+	VoiceID           string           `json:"voice_id,omitempty"`
+	IsRec             bool             `json:"is_rec,omitempty"`
+	Payload           string           `json:"payload,omitempty"`
+	OffPeak           bool             `json:"off_peak,omitempty"`
+	Watermark         bool             `json:"watermark,omitempty"`
+	WmPosition        int              `json:"wm_position,omitempty"`
+	WmURL             string           `json:"wm_url,omitempty"`
+	MetaData          string           `json:"meta_data,omitempty"`
+	CallbackUrl       string           `json:"callback_url,omitempty"`
 }
 
 type responsePayload struct {
@@ -91,22 +106,63 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	if err != nil {
 		return service.TaskErrorWrapper(err, "get_task_request_failed", http.StatusBadRequest)
 	}
-	action := constant.TaskActionTextGenerate
-	if meatAction, ok := req.Metadata["action"]; ok {
-		action, _ = meatAction.(string)
-	} else if req.HasImage() {
-		action = constant.TaskActionGenerate
-		if info.ChannelType == constant.ChannelTypeVidu {
-			// vidu 增加 首尾帧生视频和参考图生视频
-			if len(req.Images) == 2 {
-				action = constant.TaskActionFirstTailGenerate
-			} else if len(req.Images) > 2 {
-				action = constant.TaskActionReferenceGenerate
+
+	rawReq := map[string]any{}
+	_ = common.UnmarshalBodyReusable(c, &rawReq)
+	req.Images = mergeViduImages(req.Images, collectViduImageInputs(&req, rawReq)...)
+
+	action := resolveViduActionFromPath(c.Request.URL.Path)
+	if action == "" {
+		action = resolveViduActionFromMode(firstViduString(req.Mode, rawReq["mode"], mapValue(req.Metadata, "mode"), mapValue(req.Metadata, "action")))
+	}
+	if action == "" {
+		action = constant.TaskActionTextGenerate
+		if req.HasImage() {
+			action = constant.TaskActionGenerate
+			if info.ChannelType == constant.ChannelTypeVidu {
+				if len(req.Images) == 2 {
+					action = constant.TaskActionFirstTailGenerate
+				} else if len(req.Images) > 2 {
+					action = constant.TaskActionReferenceGenerate
+				}
 			}
 		}
 	}
 	info.Action = action
+	c.Set("task_request", req)
 	return nil
+}
+
+func resolveViduActionFromPath(path string) string {
+	path = strings.TrimRight(strings.ToLower(strings.TrimSpace(path)), "/")
+	switch {
+	case strings.HasSuffix(path, "/text2video"):
+		return constant.TaskActionTextGenerate
+	case strings.HasSuffix(path, "/img2video"):
+		return constant.TaskActionGenerate
+	case strings.HasSuffix(path, "/start-end2video"):
+		return constant.TaskActionFirstTailGenerate
+	case strings.HasSuffix(path, "/reference2video"):
+		return constant.TaskActionReferenceGenerate
+	default:
+		return ""
+	}
+}
+
+func resolveViduActionFromMode(mode string) string {
+	normalized := strings.ReplaceAll(strings.ToLower(strings.TrimSpace(mode)), "-", "_")
+	switch normalized {
+	case "t2v", "text", "text2video", "text_to_video":
+		return constant.TaskActionTextGenerate
+	case "i2v", "image", "img2video", "image2video", "image_to_video", "first_frame":
+		return constant.TaskActionGenerate
+	case "i2v_first_last", "start_end", "start_end2video", "start_end_to_video", "first_last", "first_tail", "first_last_frame":
+		return constant.TaskActionFirstTailGenerate
+	case "r2v", "reference", "reference2video", "reference_to_video", "reference_images", "reference_material":
+		return constant.TaskActionReferenceGenerate
+	default:
+		return ""
+	}
 }
 
 func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayInfo) (io.Reader, error) {
@@ -115,8 +171,10 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		return nil, fmt.Errorf("request not found in context")
 	}
 	req := v.(relaycommon.TaskSubmitReq)
+	rawReq := map[string]any{}
+	_ = common.UnmarshalBodyReusable(c, &rawReq)
 
-	body, err := a.convertToRequestPayload(&req, info)
+	body, err := a.convertToRequestPayload(&req, info, rawReq)
 	if err != nil {
 		return nil, err
 	}
@@ -180,6 +238,13 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 		return
 	}
 
+	if strings.HasPrefix(c.Request.URL.Path, "/ent/v2/") {
+		publicResp := vResp
+		publicResp.TaskId = info.PublicTaskID
+		c.JSON(http.StatusOK, publicResp)
+		return vResp.TaskId, responseBody, nil
+	}
+
 	ov := dto.NewOpenAIVideo()
 	ov.ID = info.PublicTaskID
 	ov.TaskID = info.PublicTaskID
@@ -213,7 +278,7 @@ func (a *TaskAdaptor) FetchTask(baseUrl, key string, body map[string]any, proxy 
 }
 
 func (a *TaskAdaptor) GetModelList() []string {
-	return []string{"viduq2", "viduq1", "vidu2.0", "vidu1.5"}
+	return []string{"viduq3-turbo", "viduq2", "viduq1", "vidu2.0", "vidu1.5"}
 }
 
 func (a *TaskAdaptor) GetChannelName() string {
@@ -224,20 +289,177 @@ func (a *TaskAdaptor) GetChannelName() string {
 // helpers
 // ============================
 
-func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq, info *relaycommon.RelayInfo) (*requestPayload, error) {
+func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq, info *relaycommon.RelayInfo, rawReq map[string]any) (*requestPayload, error) {
+	duration := taskcommon.DefaultInt(req.Duration, 5)
+	if req.Seconds != "" {
+		if parsed, err := strconv.Atoi(req.Seconds); err == nil && parsed > 0 {
+			duration = parsed
+		}
+	}
 	r := requestPayload{
 		Model:             taskcommon.DefaultString(info.UpstreamModelName, "viduq1"),
-		Images:            req.Images,
+		Images:            mergeViduImages(req.Images, collectViduImageInputs(req, rawReq)...),
 		Prompt:            req.Prompt,
-		Duration:          taskcommon.DefaultInt(req.Duration, 5),
+		Duration:          duration,
 		Resolution:        taskcommon.DefaultString(req.Size, "1080p"),
 		MovementAmplitude: "auto",
 		Bgm:               false,
 	}
+	if len(rawReq) > 0 {
+		rawBytes, err := common.Marshal(rawReq)
+		if err != nil {
+			return nil, errors.Wrap(err, "marshal raw request failed")
+		}
+		if err := common.Unmarshal(rawBytes, &r); err != nil {
+			return nil, errors.Wrap(err, "unmarshal raw request failed")
+		}
+		r.Model = taskcommon.DefaultString(info.UpstreamModelName, r.Model)
+		if r.Model == "" {
+			r.Model = "viduq1"
+		}
+		if r.Prompt == "" {
+			r.Prompt = req.Prompt
+		}
+		if r.Duration == 0 {
+			r.Duration = duration
+		}
+		if r.Resolution == "" {
+			r.Resolution = taskcommon.DefaultString(req.Size, "1080p")
+		}
+		if r.MovementAmplitude == "" {
+			r.MovementAmplitude = "auto"
+		}
+		r.Images = mergeViduImages(r.Images, collectViduImageInputs(req, rawReq)...)
+	}
 	if err := taskcommon.UnmarshalMetadata(req.Metadata, &r); err != nil {
 		return nil, errors.Wrap(err, "unmarshal metadata failed")
 	}
+	r.Model = taskcommon.DefaultString(info.UpstreamModelName, r.Model)
+	if info.Action == constant.TaskActionTextGenerate {
+		r.Images = nil
+	}
 	return &r, nil
+}
+
+func mapValue(values map[string]interface{}, key string) any {
+	if values == nil {
+		return nil
+	}
+	return values[key]
+}
+
+func firstViduString(values ...any) string {
+	for _, value := range values {
+		if text, ok := value.(string); ok && strings.TrimSpace(text) != "" {
+			return strings.TrimSpace(text)
+		}
+	}
+	return ""
+}
+
+func collectViduImageInputs(req *relaycommon.TaskSubmitReq, rawReq map[string]any) []string {
+	var images []string
+	if req != nil {
+		images = append(images, req.Images...)
+		images = append(images, extractViduURLValues(req.Image)...)
+		images = append(images, extractViduURLValues(req.InputReference)...)
+		images = append(images, extractViduContentImages(req.Content)...)
+		if req.Metadata != nil {
+			for _, key := range []string{"images", "image_urls", "image_url", "image", "input_reference", "reference_images"} {
+				images = append(images, extractViduURLValues(req.Metadata[key])...)
+			}
+			images = append(images, extractViduContentImages(req.Metadata["content"])...)
+			images = append(images, extractViduURLValues(req.Metadata["end_image_url"])...)
+			images = append(images, extractViduURLValues(req.Metadata["last_image_url"])...)
+		}
+	}
+	if rawReq != nil {
+		for _, key := range []string{"images", "image_urls", "image_url", "image", "input_reference", "reference_images"} {
+			images = append(images, extractViduURLValues(rawReq[key])...)
+		}
+		images = append(images, extractViduContentImages(rawReq["content"])...)
+		images = append(images, extractViduURLValues(rawReq["end_image_url"])...)
+		images = append(images, extractViduURLValues(rawReq["last_image_url"])...)
+	}
+	return mergeViduImages(nil, images...)
+}
+
+func extractViduContentImages(content any) []string {
+	var images []string
+	switch typed := content.(type) {
+	case []map[string]interface{}:
+		for _, item := range typed {
+			images = append(images, extractViduImageFromContentItem(item)...)
+		}
+	case []any:
+		for _, item := range typed {
+			images = append(images, extractViduImageFromContentItem(item)...)
+		}
+	case map[string]any:
+		images = append(images, extractViduImageFromContentItem(typed)...)
+	}
+	return images
+}
+
+func extractViduImageFromContentItem(item any) []string {
+	itemMap, ok := item.(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	itemType := strings.ToLower(strings.TrimSpace(fmt.Sprintf("%v", itemMap["type"])))
+	if itemType != "" && itemType != "image_url" && itemType != "input_image" && itemType != "image" {
+		return nil
+	}
+	var images []string
+	for _, key := range []string{"image_url", "url", "image"} {
+		images = append(images, extractViduURLValues(itemMap[key])...)
+	}
+	return images
+}
+
+func extractViduURLValues(value any) []string {
+	switch typed := value.(type) {
+	case string:
+		text := strings.TrimSpace(typed)
+		if text == "" {
+			return nil
+		}
+		return []string{text}
+	case []string:
+		var out []string
+		for _, item := range typed {
+			out = append(out, extractViduURLValues(item)...)
+		}
+		return out
+	case []any:
+		var out []string
+		for _, item := range typed {
+			out = append(out, extractViduURLValues(item)...)
+		}
+		return out
+	case map[string]any:
+		var out []string
+		for _, key := range []string{"url", "image_url", "image"} {
+			out = append(out, extractViduURLValues(typed[key])...)
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func mergeViduImages(existing []string, values ...string) []string {
+	out := make([]string, 0, len(existing)+len(values))
+	seen := map[string]bool{}
+	for _, item := range append(existing, values...) {
+		text := strings.TrimSpace(item)
+		if text == "" || seen[text] {
+			continue
+		}
+		seen[text] = true
+		out = append(out, text)
+	}
+	return out
 }
 
 func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, error) {

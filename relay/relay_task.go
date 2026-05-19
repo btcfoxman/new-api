@@ -378,10 +378,16 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 	}
 
 	isOpenAIVideoAPI := strings.HasPrefix(c.Request.RequestURI, "/v1/videos/")
+	isViduOfficialTaskAPI := strings.HasPrefix(c.Request.URL.Path, "/ent/v2/tasks/")
 
 	// Gemini/Vertex 支持实时查询：用户 fetch 时直接从上游拉取最新状态
 	if realtimeResp := tryRealtimeFetch(originTask, isOpenAIVideoAPI); len(realtimeResp) > 0 {
 		respBody = realtimeResp
+		return
+	}
+
+	if isViduOfficialTaskAPI {
+		respBody = buildViduOfficialTaskResponse(originTask)
 		return
 	}
 
@@ -414,6 +420,39 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 		taskResp = service.TaskErrorWrapper(err, "marshal_response_failed", http.StatusInternalServerError)
 	}
 	return
+}
+
+func buildViduOfficialTaskResponse(originTask *model.Task) []byte {
+	if len(originTask.Data) > 0 {
+		var payload map[string]any
+		if err := common.Unmarshal(originTask.Data, &payload); err == nil && payload != nil {
+			payload["id"] = originTask.TaskID
+			if _, ok := payload["task_id"]; ok {
+				payload["task_id"] = originTask.TaskID
+			}
+			data, err := common.Marshal(payload)
+			if err == nil {
+				return data
+			}
+		}
+	}
+
+	state := "created"
+	switch originTask.Status {
+	case model.TaskStatusInProgress:
+		state = "processing"
+	case model.TaskStatusSuccess:
+		state = "success"
+	case model.TaskStatusFailure:
+		state = "failed"
+	}
+	data, _ := common.Marshal(map[string]any{
+		"id":        originTask.TaskID,
+		"state":     state,
+		"err_code":  originTask.FailReason,
+		"creations": []any{},
+	})
+	return data
 }
 
 // tryRealtimeFetch 尝试从上游实时拉取 Gemini/Vertex 任务状态。

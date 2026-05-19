@@ -51,12 +51,24 @@ func SetVideoRouter(router *gin.Engine) {
 	}
 
 	// Doubao official API routes
-    doubaoOfficialGroup := router.Group("/api/v3")
-    doubaoOfficialGroup.Use(middleware.RouteTag("relay"))
-    doubaoOfficialGroup.Use(middleware.TokenAuth(), middleware.Distribute())
-    {
-        doubaoOfficialGroup.POST("/contents/generations/tasks", controller.RelayTask)
-        doubaoOfficialGroup.GET("/contents/generations/tasks/:task_id", controller.RelayTaskFetch)
+	doubaoOfficialGroup := router.Group("/api/v3")
+	doubaoOfficialGroup.Use(middleware.RouteTag("relay"))
+	doubaoOfficialGroup.Use(middleware.TokenAuth(), middleware.Distribute())
+	{
+		doubaoOfficialGroup.POST("/contents/generations/tasks", controller.RelayTask)
+		doubaoOfficialGroup.GET("/contents/generations/tasks/:task_id", controller.RelayTaskFetch)
 		// doubaoOfficialGroup.GET("/contents/generations/tasks", controller.BatchQueryTasks)
-    }
+	}
+
+	// Vidu official API routes
+	viduOfficialGroup := router.Group("/ent/v2")
+	viduOfficialGroup.Use(middleware.RouteTag("relay"))
+	viduOfficialGroup.Use(middleware.TokenAuth(), middleware.Distribute())
+	{
+		viduOfficialGroup.POST("/text2video", controller.RelayTask)
+		viduOfficialGroup.POST("/img2video", controller.RelayTask)
+		viduOfficialGroup.POST("/start-end2video", controller.RelayTask)
+		viduOfficialGroup.POST("/reference2video", controller.RelayTask)
+		viduOfficialGroup.GET("/tasks/:task_id/creations", controller.RelayTaskFetch)
+	}
 }
