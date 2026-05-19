@@ -378,6 +378,7 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 	}
 
 	isOpenAIVideoAPI := strings.HasPrefix(c.Request.RequestURI, "/v1/videos/")
+	isAliOfficialTaskAPI := strings.HasPrefix(c.Request.URL.Path, "/api/v1/tasks/")
 	isViduOfficialTaskAPI := strings.HasPrefix(c.Request.URL.Path, "/ent/v2/tasks/")
 
 	// Gemini/Vertex 支持实时查询：用户 fetch 时直接从上游拉取最新状态
@@ -388,6 +389,11 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 
 	if isViduOfficialTaskAPI {
 		respBody = buildViduOfficialTaskResponse(originTask)
+		return
+	}
+
+	if isAliOfficialTaskAPI {
+		respBody = buildAliOfficialTaskResponse(originTask)
 		return
 	}
 
@@ -453,6 +459,51 @@ func buildViduOfficialTaskResponse(originTask *model.Task) []byte {
 		"creations": []any{},
 	})
 	return data
+}
+
+func buildAliOfficialTaskResponse(originTask *model.Task) []byte {
+	if len(originTask.Data) > 0 {
+		var payload map[string]any
+		if err := common.Unmarshal(originTask.Data, &payload); err == nil && payload != nil {
+			output, _ := payload["output"].(map[string]any)
+			if output == nil {
+				output = map[string]any{}
+			}
+			output["task_id"] = originTask.TaskID
+			if _, ok := output["task_status"]; !ok {
+				output["task_status"] = aliTaskStatus(originTask.Status)
+			}
+			payload["output"] = output
+			data, err := common.Marshal(payload)
+			if err == nil {
+				return data
+			}
+		}
+	}
+
+	data, _ := common.Marshal(map[string]any{
+		"output": map[string]any{
+			"task_id":     originTask.TaskID,
+			"task_status": aliTaskStatus(originTask.Status),
+			"message":     originTask.FailReason,
+		},
+	})
+	return data
+}
+
+func aliTaskStatus(status model.TaskStatus) string {
+	switch status {
+	case model.TaskStatusSubmitted, model.TaskStatusQueued:
+		return "PENDING"
+	case model.TaskStatusInProgress:
+		return "RUNNING"
+	case model.TaskStatusSuccess:
+		return "SUCCEEDED"
+	case model.TaskStatusFailure:
+		return "FAILED"
+	default:
+		return "PENDING"
+	}
 }
 
 // tryRealtimeFetch 尝试从上游实时拉取 Gemini/Vertex 任务状态。

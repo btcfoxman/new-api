@@ -268,6 +268,22 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 			c.Set("relay_mode", relayconstant.RelayModeVideoFetchByID)
 			shouldSelectChannel = false
 		}
+	} else if strings.HasPrefix(c.Request.URL.Path, "/api/v1/tasks/") {
+		if c.Request.Method == http.MethodGet {
+			c.Set("relay_mode", relayconstant.RelayModeVideoFetchByID)
+			shouldSelectChannel = false
+		}
+	} else if strings.HasPrefix(c.Request.URL.Path, "/api/v1/services/aigc/video-generation/video-synthesis") {
+		relayMode := relayconstant.RelayModeUnknown
+		if c.Request.Method == http.MethodPost {
+			req, err := getModelFromRequest(c)
+			if err != nil {
+				return nil, false, err
+			}
+			modelRequest.Model = req.Model
+			relayMode = relayconstant.RelayModeVideoSubmit
+		}
+		c.Set("relay_mode", relayMode)
 	} else if strings.HasPrefix(c.Request.URL.Path, "/ent/v2/tasks/") {
 		if c.Request.Method == http.MethodGet {
 			c.Set("relay_mode", relayconstant.RelayModeVideoFetchByID)

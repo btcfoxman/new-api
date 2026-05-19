@@ -60,6 +60,15 @@ func SetVideoRouter(router *gin.Engine) {
 		// doubaoOfficialGroup.GET("/contents/generations/tasks", controller.BatchQueryTasks)
 	}
 
+	// Ali DashScope official video API routes
+	aliOfficialGroup := router.Group("/api/v1")
+	aliOfficialGroup.Use(middleware.RouteTag("relay"))
+	aliOfficialGroup.Use(middleware.TokenAuth(), middleware.Distribute())
+	{
+		aliOfficialGroup.POST("/services/aigc/video-generation/video-synthesis", controller.RelayTask)
+		aliOfficialGroup.GET("/tasks/:task_id", controller.RelayTaskFetch)
+	}
+
 	// Vidu official API routes
 	viduOfficialGroup := router.Group("/ent/v2")
 	viduOfficialGroup.Use(middleware.RouteTag("relay"))

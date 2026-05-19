@@ -41,3 +41,51 @@ func TestGetModelRequestReadsURLEncodedVideoModel(t *testing.T) {
 		t.Fatalf("relay_mode = %d, want %d", relayMode, relayconstant.RelayModeVideoSubmit)
 	}
 }
+
+func TestGetModelRequestReadsAliOfficialHappyHorseModel(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/services/aigc/video-generation/video-synthesis", strings.NewReader(`{
+		"model": "happyhorse-1.0-t2v",
+		"input": {"prompt": "horse in neon city"},
+		"parameters": {"resolution": "720P", "duration": 5}
+	}`))
+	req.Header.Set("Content-Type", "application/json")
+	c.Request = req
+
+	modelRequest, shouldSelectChannel, err := getModelRequest(c)
+	if err != nil {
+		t.Fatalf("getModelRequest() error = %v", err)
+	}
+	if !shouldSelectChannel {
+		t.Fatal("shouldSelectChannel = false, want true")
+	}
+	if modelRequest.Model != "happyhorse-1.0-t2v" {
+		t.Fatalf("model = %q, want %q", modelRequest.Model, "happyhorse-1.0-t2v")
+	}
+	if relayMode := c.GetInt("relay_mode"); relayMode != relayconstant.RelayModeVideoSubmit {
+		t.Fatalf("relay_mode = %d, want %d", relayMode, relayconstant.RelayModeVideoSubmit)
+	}
+}
+
+func TestGetModelRequestAliOfficialHappyHorseTaskFetchDoesNotSelectChannel(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/tasks/task_123", nil)
+
+	_, shouldSelectChannel, err := getModelRequest(c)
+	if err != nil {
+		t.Fatalf("getModelRequest() error = %v", err)
+	}
+	if shouldSelectChannel {
+		t.Fatal("shouldSelectChannel = true, want false")
+	}
+	if relayMode := c.GetInt("relay_mode"); relayMode != relayconstant.RelayModeVideoFetchByID {
+		t.Fatalf("relay_mode = %d, want %d", relayMode, relayconstant.RelayModeVideoFetchByID)
+	}
+}

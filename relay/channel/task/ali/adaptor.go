@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
@@ -29,30 +30,34 @@ import (
 // AliVideoRequest 阿里通义万相视频生成请求
 type AliVideoRequest struct {
 	Model      string              `json:"model"`
+	Mode       string              `json:"mode,omitempty"`
 	Input      AliVideoInput       `json:"input"`
 	Parameters *AliVideoParameters `json:"parameters,omitempty"`
 }
 
 // AliVideoInput 视频输入参数
 type AliVideoInput struct {
-	Prompt         string `json:"prompt,omitempty"`          // 文本提示词
-	ImgURL         string `json:"img_url,omitempty"`         // 首帧图像URL或Base64（图生视频）
-	FirstFrameURL  string `json:"first_frame_url,omitempty"` // 首帧图片URL（首尾帧生视频）
-	LastFrameURL   string `json:"last_frame_url,omitempty"`  // 尾帧图片URL（首尾帧生视频）
-	AudioURL       string `json:"audio_url,omitempty"`       // 音频URL（wan2.5支持）
-	NegativePrompt string `json:"negative_prompt,omitempty"` // 反向提示词
-	Template       string `json:"template,omitempty"`        // 视频特效模板
+	Prompt         string           `json:"prompt,omitempty"`          // 文本提示词
+	ImgURL         string           `json:"img_url,omitempty"`         // 首帧图像URL或Base64（图生视频）
+	FirstFrameURL  string           `json:"first_frame_url,omitempty"` // 首帧图片URL（首尾帧生视频）
+	LastFrameURL   string           `json:"last_frame_url,omitempty"`  // 尾帧图片URL（首尾帧生视频）
+	AudioURL       string           `json:"audio_url,omitempty"`       // 音频URL（wan2.5支持）
+	NegativePrompt string           `json:"negative_prompt,omitempty"` // 反向提示词
+	Template       string           `json:"template,omitempty"`        // 视频特效模板
+	Media          []map[string]any `json:"media,omitempty"`
 }
 
 // AliVideoParameters 视频参数
 type AliVideoParameters struct {
-	Resolution   string `json:"resolution,omitempty"`    // 分辨率: 480P/720P/1080P（图生视频、首尾帧生视频）
+	Resolution   string `json:"resolution,omitempty"` // 分辨率: 480P/720P/1080P（图生视频、首尾帧生视频）
+	Ratio        string `json:"ratio,omitempty"`
 	Size         string `json:"size,omitempty"`          // 尺寸: 如 "832*480"（文生视频）
 	Duration     int    `json:"duration,omitempty"`      // 时长: 3-10秒
 	PromptExtend bool   `json:"prompt_extend,omitempty"` // 是否开启prompt智能改写
 	Watermark    bool   `json:"watermark,omitempty"`     // 是否添加水印
 	Audio        *bool  `json:"audio,omitempty"`         // 是否添加音频（wan2.5）
-	Seed         int    `json:"seed,omitempty"`          // 随机数种子
+	AudioSetting string `json:"audio_setting,omitempty"`
+	Seed         int    `json:"seed,omitempty"` // 随机数种子
 }
 
 // AliVideoResponse 阿里通义万相响应
@@ -122,8 +127,77 @@ func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
 }
 
 func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.TaskError) {
+	if isAliOfficialVideoSynthesisPath(c.Request.URL.Path) {
+		return validateAliOfficialVideoRequest(c, info)
+	}
 	// ValidateMultipartDirect 负责解析并将原始 TaskSubmitReq 存入 context
 	return relaycommon.ValidateMultipartDirect(c, info)
+}
+
+func validateAliOfficialVideoRequest(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError {
+	rawReq := map[string]any{}
+	if err := common.UnmarshalBodyReusable(c, &rawReq); err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_json", http.StatusBadRequest)
+	}
+
+	var aliReq AliVideoRequest
+	rawBytes, err := common.Marshal(rawReq)
+	if err != nil {
+		return service.TaskErrorWrapperLocal(errors.Wrap(err, "marshal request failed"), "invalid_request", http.StatusBadRequest)
+	}
+	if err := common.Unmarshal(rawBytes, &aliReq); err != nil {
+		return service.TaskErrorWrapperLocal(errors.Wrap(err, "unmarshal request failed"), "invalid_request", http.StatusBadRequest)
+	}
+
+	modelName := strings.TrimSpace(aliReq.Model)
+	if modelName == "" {
+		return service.TaskErrorWrapperLocal(fmt.Errorf("model field is required"), "missing_model", http.StatusBadRequest)
+	}
+	prompt := strings.TrimSpace(aliReq.Input.Prompt)
+	if prompt == "" {
+		return service.TaskErrorWrapperLocal(fmt.Errorf("prompt is required"), "invalid_request", http.StatusBadRequest)
+	}
+
+	req := relaycommon.TaskSubmitReq{
+		Model:    modelName,
+		Mode:     strings.TrimSpace(aliReq.Mode),
+		Prompt:   prompt,
+		Metadata: rawReq,
+	}
+	if req.Mode == "" {
+		req.Mode = firstNonEmptyString(mapStringValue(rawReq, "mode"))
+	}
+	if aliReq.Parameters != nil {
+		req.Duration = aliReq.Parameters.Duration
+		req.Size = firstNonEmptyString(aliReq.Parameters.Resolution, aliReq.Parameters.Size)
+	}
+
+	if _, err := resolveHappyHorseProviderModel(req.Model, req.Mode); err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+	}
+
+	info.Action = resolveAliOfficialAction(req.Model, req.Mode)
+	c.Set("task_request", req)
+	return nil
+}
+
+func isAliOfficialVideoSynthesisPath(path string) bool {
+	return strings.TrimRight(strings.ToLower(strings.TrimSpace(path)), "/") == "/api/v1/services/aigc/video-generation/video-synthesis"
+}
+
+func resolveAliOfficialAction(model string, mode string) string {
+	modelToken := strings.ToLower(strings.TrimSpace(model))
+	modeToken := strings.ReplaceAll(strings.ToLower(strings.TrimSpace(mode)), "-", "_")
+	switch {
+	case strings.HasSuffix(modelToken, "-i2v") || modeToken == "i2v" || modeToken == "image2video" || modeToken == "image_to_video":
+		return constant.TaskActionGenerate
+	case strings.HasSuffix(modelToken, "-r2v") || modeToken == "r2v" || modeToken == "reference2video" || modeToken == "reference_to_video" || modeToken == "reference_images":
+		return constant.TaskActionReferenceGenerate
+	case strings.HasSuffix(modelToken, "-video-edit") || modeToken == "video_edit" || modeToken == "edit":
+		return constant.TaskActionGenerate
+	default:
+		return constant.TaskActionTextGenerate
+	}
 }
 
 func (a *TaskAdaptor) BuildRequestURL(info *relaycommon.RelayInfo) (string, error) {
@@ -272,7 +346,7 @@ func (a *TaskAdaptor) convertToAliRequest(info *relaycommon.RelayInfo, req relay
 	// 处理分辨率映射
 	if req.Size != "" {
 		// text to video size must be contained *
-		if strings.Contains(req.Model, "t2v") && !strings.Contains(req.Size, "*") {
+		if strings.Contains(req.Model, "t2v") && !isHappyHorseModelName(req.Model) && !strings.Contains(req.Size, "*") {
 			return nil, fmt.Errorf("invalid size: %s, example: %s", req.Size, "1920*1080")
 		}
 		if strings.Contains(req.Size, "*") {
@@ -336,11 +410,64 @@ func (a *TaskAdaptor) convertToAliRequest(info *relaycommon.RelayInfo, req relay
 		}
 	}
 
+	if resolvedModel, err := resolveHappyHorseProviderModel(aliReq.Model, firstNonEmptyString(aliReq.Mode, req.Mode)); err != nil {
+		return nil, err
+	} else if resolvedModel != "" {
+		aliReq.Model = resolvedModel
+		upstreamModel = resolvedModel
+	}
+	aliReq.Mode = ""
+
 	if aliReq.Model != upstreamModel {
 		return nil, errors.New("can't change model with metadata")
 	}
 
 	return aliReq, nil
+}
+
+func resolveHappyHorseProviderModel(model string, mode string) (string, error) {
+	modelToken := strings.ToLower(strings.TrimSpace(model))
+	if !isHappyHorseModelName(modelToken) {
+		return "", nil
+	}
+	if modelToken != "happyhorse-1.0" {
+		return modelToken, nil
+	}
+
+	modeToken := strings.ReplaceAll(strings.ToLower(strings.TrimSpace(mode)), "-", "_")
+	switch modeToken {
+	case "t2v", "text2video", "text_to_video":
+		return "happyhorse-1.0-t2v", nil
+	case "i2v", "image2video", "image_to_video", "first_frame":
+		return "happyhorse-1.0-i2v", nil
+	case "r2v", "reference2video", "reference_to_video", "reference_images":
+		return "happyhorse-1.0-r2v", nil
+	case "video_edit", "edit":
+		return "happyhorse-1.0-video-edit", nil
+	default:
+		return "", fmt.Errorf("happyhorse-1.0 requires mode to be one of: t2v, i2v, r2v, video_edit")
+	}
+}
+
+func isHappyHorseModelName(model string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(model)), "happyhorse-1.0")
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if text := strings.TrimSpace(value); text != "" {
+			return text
+		}
+	}
+	return ""
+}
+
+func mapStringValue(values map[string]any, key string) string {
+	if values == nil {
+		return ""
+	}
+	text, _ := values[key].(string)
+	return text
 }
 
 // EstimateBilling 根据用户请求参数计算 OtherRatios（时长、分辨率等）。
@@ -402,6 +529,13 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 	}
 
 	// 转换为 OpenAI 格式响应
+	if isAliOfficialVideoSynthesisPath(c.Request.URL.Path) {
+		officialResp := aliResp
+		officialResp.Output.TaskID = info.PublicTaskID
+		c.JSON(http.StatusOK, officialResp)
+		return aliResp.Output.TaskID, responseBody, nil
+	}
+
 	openAIResp := dto.NewOpenAIVideo()
 	openAIResp.ID = info.PublicTaskID
 	openAIResp.TaskID = info.PublicTaskID
