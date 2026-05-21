@@ -75,6 +75,31 @@ func TestHappyHorseAggregateModelResolvesByMode(t *testing.T) {
 	require.Equal(t, "happyhorse-1.0-video-edit", mustResolveHappyHorseModel(t, "happyhorse-1.0", "video_edit"))
 }
 
+func TestHappyHorseParametersDurationOverridesTopLevelSeconds(t *testing.T) {
+	var req relaycommon.TaskSubmitReq
+	require.NoError(t, common.Unmarshal([]byte(`{
+		"model": "happyhorse-1.0-r2v",
+		"prompt": "turn reference images into a video",
+		"seconds": "4",
+		"parameters": {
+			"duration": 15,
+			"resolution": "720P",
+			"ratio": "9:16"
+		}
+	}`), &req))
+
+	info := &relaycommon.RelayInfo{
+		ChannelMeta: &relaycommon.ChannelMeta{
+			UpstreamModelName: "happyhorse-1.0-r2v",
+		},
+	}
+	adaptor := &TaskAdaptor{}
+	aliReq, err := adaptor.convertToAliRequest(info, req)
+	require.NoError(t, err)
+	require.Equal(t, 15, aliReq.Parameters.Duration)
+	require.Equal(t, "720P", aliReq.Parameters.Resolution)
+}
+
 func mustResolveHappyHorseModel(t *testing.T, model string, mode string) string {
 	t.Helper()
 	resolved, err := resolveHappyHorseProviderModel(model, mode)

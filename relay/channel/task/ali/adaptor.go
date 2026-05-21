@@ -399,6 +399,10 @@ func (a *TaskAdaptor) convertToAliRequest(info *relaycommon.RelayInfo, req relay
 	}
 
 	// 从 metadata 中提取额外参数
+	if err := applyHappyHorseParametersDuration(aliReq, req.Parameters); err != nil {
+		return nil, err
+	}
+
 	if req.Metadata != nil {
 		if metadataBytes, err := common.Marshal(req.Metadata); err == nil {
 			err = common.Unmarshal(metadataBytes, aliReq)
@@ -423,6 +427,40 @@ func (a *TaskAdaptor) convertToAliRequest(info *relaycommon.RelayInfo, req relay
 	}
 
 	return aliReq, nil
+}
+
+func applyHappyHorseParametersDuration(aliReq *AliVideoRequest, parameters map[string]interface{}) error {
+	if aliReq == nil || aliReq.Parameters == nil || !isHappyHorseModelName(aliReq.Model) || len(parameters) == 0 {
+		return nil
+	}
+	value, ok := parameters["duration"]
+	if !ok {
+		return nil
+	}
+	duration, ok := taskParameterDuration(value)
+	if !ok {
+		return fmt.Errorf("invalid parameters.duration: %v", value)
+	}
+	aliReq.Parameters.Duration = duration
+	return nil
+}
+
+func taskParameterDuration(value interface{}) (int, bool) {
+	switch typed := value.(type) {
+	case int:
+		return typed, typed > 0
+	case int64:
+		return int(typed), typed > 0
+	case float64:
+		return int(typed), typed > 0
+	case float32:
+		return int(typed), typed > 0
+	case string:
+		parsed, err := strconv.Atoi(strings.TrimSpace(typed))
+		return parsed, err == nil && parsed > 0
+	default:
+		return 0, false
+	}
 }
 
 func resolveHappyHorseProviderModel(model string, mode string) (string, error) {
