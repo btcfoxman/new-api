@@ -473,6 +473,11 @@ func buildAliOfficialTaskResponse(originTask *model.Task) []byte {
 			if _, ok := output["task_status"]; !ok {
 				output["task_status"] = aliTaskStatus(originTask.Status)
 			}
+			if existingVideoURL, ok := output["video_url"].(string); !ok || strings.TrimSpace(existingVideoURL) == "" {
+				if videoURL, ok := payload["video_url"].(string); ok && strings.TrimSpace(videoURL) != "" {
+					output["video_url"] = videoURL
+				}
+			}
 			payload["output"] = output
 			data, err := common.Marshal(payload)
 			if err == nil {
@@ -481,13 +486,18 @@ func buildAliOfficialTaskResponse(originTask *model.Task) []byte {
 		}
 	}
 
-	data, _ := common.Marshal(map[string]any{
-		"output": map[string]any{
-			"task_id":     originTask.TaskID,
-			"task_status": aliTaskStatus(originTask.Status),
-			"message":     originTask.FailReason,
-		},
-	})
+	output := map[string]any{
+		"task_id":     originTask.TaskID,
+		"task_status": aliTaskStatus(originTask.Status),
+		"message":     originTask.FailReason,
+	}
+	if originTask.Status == model.TaskStatusSuccess {
+		if videoURL := strings.TrimSpace(originTask.GetResultURL()); videoURL != "" {
+			output["video_url"] = videoURL
+		}
+	}
+
+	data, _ := common.Marshal(map[string]any{"output": output})
 	return data
 }
 
