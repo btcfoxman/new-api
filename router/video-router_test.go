@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestSetVideoRouterRegistersAliOfficialHappyHorseRoutes(t *testing.T) {
+func TestSetVideoRouterRegistersOfficialVideoRoutes(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 
@@ -21,4 +21,6 @@ func TestSetVideoRouterRegistersAliOfficialHappyHorseRoutes(t *testing.T) {
 
 	require.True(t, routes[http.MethodPost+" /api/v1/services/aigc/video-generation/video-synthesis"])
 	require.True(t, routes[http.MethodGet+" /api/v1/tasks/:task_id"])
+	require.True(t, routes[http.MethodPost+" /api/v3/contents/generations/tasks"])
+	require.True(t, routes[http.MethodGet+" /api/v3/contents/generations/tasks/:task_id"])
 }

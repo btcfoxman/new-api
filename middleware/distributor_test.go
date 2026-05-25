@@ -71,12 +71,64 @@ func TestGetModelRequestReadsAliOfficialHappyHorseModel(t *testing.T) {
 	}
 }
 
+func TestGetModelRequestReadsDoubaoOfficialVideoModel(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v3/contents/generations/tasks", strings.NewReader(`{
+		"model": "gemini-omni",
+		"content": [
+			{"type": "text", "text": "a fashion product video"},
+			{"type": "image_url", "image_url": {"url": "https://example.com/ref.png"}}
+		],
+		"mode": "r2v",
+		"duration": 8
+	}`))
+	req.Header.Set("Content-Type", "application/json")
+	c.Request = req
+
+	modelRequest, shouldSelectChannel, err := getModelRequest(c)
+	if err != nil {
+		t.Fatalf("getModelRequest() error = %v", err)
+	}
+	if !shouldSelectChannel {
+		t.Fatal("shouldSelectChannel = false, want true")
+	}
+	if modelRequest.Model != "gemini-omni" {
+		t.Fatalf("model = %q, want %q", modelRequest.Model, "gemini-omni")
+	}
+	if relayMode := c.GetInt("relay_mode"); relayMode != relayconstant.RelayModeVideoSubmit {
+		t.Fatalf("relay_mode = %d, want %d", relayMode, relayconstant.RelayModeVideoSubmit)
+	}
+}
+
 func TestGetModelRequestAliOfficialHappyHorseTaskFetchDoesNotSelectChannel(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
 	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/tasks/task_123", nil)
+
+	_, shouldSelectChannel, err := getModelRequest(c)
+	if err != nil {
+		t.Fatalf("getModelRequest() error = %v", err)
+	}
+	if shouldSelectChannel {
+		t.Fatal("shouldSelectChannel = true, want false")
+	}
+	if relayMode := c.GetInt("relay_mode"); relayMode != relayconstant.RelayModeVideoFetchByID {
+		t.Fatalf("relay_mode = %d, want %d", relayMode, relayconstant.RelayModeVideoFetchByID)
+	}
+}
+
+func TestGetModelRequestDoubaoOfficialTaskFetchDoesNotSelectChannel(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v3/contents/generations/tasks/task_123", nil)
 
 	_, shouldSelectChannel, err := getModelRequest(c)
 	if err != nil {

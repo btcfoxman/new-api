@@ -262,11 +262,22 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 		if _, ok := c.Get("relay_mode"); !ok {
 			c.Set("relay_mode", relayMode)
 		}
-	} else if strings.HasPrefix(c.Request.URL.Path, "/api/v3/contents/generations/tasks/") {
-		// Doubao task query by task_id should not require model in request body/query.
-		if c.Request.Method == http.MethodGet {
+	} else if strings.HasPrefix(c.Request.URL.Path, "/api/v3/contents/generations/tasks") {
+		relayMode := relayconstant.RelayModeUnknown
+		if c.Request.Method == http.MethodPost && c.Request.URL.Path == "/api/v3/contents/generations/tasks" {
+			req, err := getModelFromRequest(c)
+			if err != nil {
+				return nil, false, err
+			}
+			modelRequest.Model = req.Model
+			relayMode = relayconstant.RelayModeVideoSubmit
+		} else if c.Request.Method == http.MethodGet && strings.HasPrefix(c.Request.URL.Path, "/api/v3/contents/generations/tasks/") {
+			// Doubao task query by task_id should not require model in request body/query.
 			c.Set("relay_mode", relayconstant.RelayModeVideoFetchByID)
 			shouldSelectChannel = false
+		}
+		if relayMode != relayconstant.RelayModeUnknown {
+			c.Set("relay_mode", relayMode)
 		}
 	} else if strings.HasPrefix(c.Request.URL.Path, "/api/v1/tasks/") {
 		if c.Request.Method == http.MethodGet {
