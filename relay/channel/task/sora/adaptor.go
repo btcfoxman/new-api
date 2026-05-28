@@ -2,6 +2,7 @@ package sora
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -98,7 +99,7 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 // EstimateBilling 根据用户请求的 seconds 和 size 计算 OtherRatios。
 func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInfo) map[string]float64 {
 	// remix 路径的 OtherRatios 已在 ResolveOriginTask 中设置
-	if info.Action == constant.TaskActionRemix {
+	if info != nil && info.TaskRelayInfo != nil && info.Action == constant.TaskActionRemix {
 		return nil
 	}
 
@@ -107,10 +108,7 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 		return nil
 	}
 
-	seconds, _ := strconv.Atoi(req.Seconds)
-	if seconds == 0 {
-		seconds = req.Duration
-	}
+	seconds := estimateTaskSeconds(req)
 	if seconds <= 0 {
 		seconds = 4
 	}
@@ -128,6 +126,54 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 		ratios["size"] = 1.666667
 	}
 	return ratios
+}
+
+func estimateTaskSeconds(req relaycommon.TaskSubmitReq) int {
+	if seconds, ok := parsePositiveDuration(req.Seconds); ok {
+		return seconds
+	}
+	if req.Duration > 0 {
+		return req.Duration
+	}
+	if req.Parameters != nil {
+		if seconds, ok := parsePositiveDuration(req.Parameters["duration"]); ok {
+			return seconds
+		}
+	}
+	return 0
+}
+
+func parsePositiveDuration(value interface{}) (int, bool) {
+	switch typed := value.(type) {
+	case int:
+		return typed, typed > 0
+	case int64:
+		return int(typed), typed > 0
+	case int32:
+		return int(typed), typed > 0
+	case float64:
+		return int(typed), typed > 0
+	case float32:
+		return int(typed), typed > 0
+	case json.Number:
+		if parsed, err := typed.Int64(); err == nil && parsed > 0 {
+			return int(parsed), true
+		}
+		parsed, err := typed.Float64()
+		return int(parsed), err == nil && parsed > 0
+	case string:
+		text := strings.TrimSpace(typed)
+		if text == "" {
+			return 0, false
+		}
+		if parsed, err := strconv.Atoi(text); err == nil && parsed > 0 {
+			return parsed, true
+		}
+		parsed, err := strconv.ParseFloat(text, 64)
+		return int(parsed), err == nil && parsed > 0
+	default:
+		return 0, false
+	}
 }
 
 func (a *TaskAdaptor) BuildRequestURL(info *relaycommon.RelayInfo) (string, error) {

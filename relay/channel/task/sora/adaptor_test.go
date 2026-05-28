@@ -133,3 +133,46 @@ func TestBuildRequestBodyUsesOfficialModelMappingForURLEncodedRequest(t *testing
 		t.Fatalf("model = %q, want %q", got, "sora-2-official")
 	}
 }
+
+func TestEstimateBillingUsesParametersDurationWhenTopLevelDurationMissing(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Set("task_request", relaycommon.TaskSubmitReq{
+		Model:  "happyhorse-1.0",
+		Mode:   "r2v",
+		Prompt: "turn reference images into a video",
+		Parameters: map[string]interface{}{
+			"duration":   float64(12),
+			"resolution": "720P",
+		},
+	})
+
+	ratios := (&TaskAdaptor{}).EstimateBilling(c, &relaycommon.RelayInfo{})
+
+	if got := ratios["seconds"]; got != 12 {
+		t.Fatalf("seconds ratio = %v, want 12", got)
+	}
+}
+
+func TestEstimateBillingPrefersTopLevelSecondsOverParametersDuration(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Set("task_request", relaycommon.TaskSubmitReq{
+		Model:   "sora-2",
+		Prompt:  "test prompt",
+		Seconds: "8",
+		Parameters: map[string]interface{}{
+			"duration": float64(12),
+		},
+	})
+
+	ratios := (&TaskAdaptor{}).EstimateBilling(c, &relaycommon.RelayInfo{})
+
+	if got := ratios["seconds"]; got != 8 {
+		t.Fatalf("seconds ratio = %v, want 8", got)
+	}
+}
