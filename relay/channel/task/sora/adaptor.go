@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/textproto"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -69,6 +70,8 @@ type TaskAdaptor struct {
 	apiKey      string
 	baseURL     string
 }
+
+var inlineVideoDurationPattern = regexp.MustCompile(`(?i)(^|\s)--(?:dur|duration)(?:=|\s+)(\S+)`)
 
 func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
 	a.ChannelType = info.ChannelType
@@ -140,7 +143,72 @@ func estimateTaskSeconds(req relaycommon.TaskSubmitReq) int {
 			return seconds
 		}
 	}
+	if seconds, ok := parseInlineTaskDuration(req); ok {
+		return seconds
+	}
 	return 0
+}
+
+func parseInlineTaskDuration(req relaycommon.TaskSubmitReq) (int, bool) {
+	for _, text := range taskDurationTexts(req) {
+		if seconds, ok := parseInlineDurationText(text); ok {
+			return seconds, true
+		}
+	}
+	return 0, false
+}
+
+func taskDurationTexts(req relaycommon.TaskSubmitReq) []string {
+	texts := make([]string, 0, 1+len(req.Content))
+	if prompt := strings.TrimSpace(req.Prompt); prompt != "" {
+		texts = append(texts, prompt)
+	}
+	texts = append(texts, taskContentTexts(req.Content)...)
+	if req.Metadata != nil {
+		if text, ok := req.Metadata["text"].(string); ok && strings.TrimSpace(text) != "" {
+			texts = append(texts, text)
+		}
+		texts = append(texts, taskContentTexts(req.Metadata["content"])...)
+	}
+	return texts
+}
+
+func taskContentTexts(content any) []string {
+	var texts []string
+	appendText := func(item any) {
+		itemMap, ok := item.(map[string]interface{})
+		if !ok {
+			return
+		}
+		itemType, _ := itemMap["type"].(string)
+		if !strings.EqualFold(strings.TrimSpace(itemType), "text") {
+			return
+		}
+		text, _ := itemMap["text"].(string)
+		if strings.TrimSpace(text) != "" {
+			texts = append(texts, text)
+		}
+	}
+
+	switch typed := content.(type) {
+	case []map[string]interface{}:
+		for _, item := range typed {
+			appendText(item)
+		}
+	case []interface{}:
+		for _, item := range typed {
+			appendText(item)
+		}
+	}
+	return texts
+}
+
+func parseInlineDurationText(text string) (int, bool) {
+	matches := inlineVideoDurationPattern.FindStringSubmatch(text)
+	if len(matches) < 3 {
+		return 0, false
+	}
+	return parsePositiveDuration(matches[2])
 }
 
 func parsePositiveDuration(value interface{}) (int, bool) {

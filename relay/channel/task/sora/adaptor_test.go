@@ -156,6 +156,34 @@ func TestEstimateBillingUsesParametersDurationWhenTopLevelDurationMissing(t *tes
 	}
 }
 
+func TestEstimateBillingUsesInlineContentDurationWhenTopLevelDurationMissing(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Set("task_request", relaycommon.TaskSubmitReq{
+		Model:  "doubao-seedance-2-0-fast-260128-sdapi",
+		Mode:   "reference_images",
+		Prompt: "reference based character video",
+		Content: []map[string]interface{}{
+			{
+				"type": "text",
+				"text": "reference based character video --ratio 9:16 --dur 10",
+			},
+			{
+				"type":      "image_url",
+				"image_url": "https://example.com/ref.png",
+			},
+		},
+	})
+
+	ratios := (&TaskAdaptor{}).EstimateBilling(c, &relaycommon.RelayInfo{})
+
+	if got := ratios["seconds"]; got != 10 {
+		t.Fatalf("seconds ratio = %v, want 10", got)
+	}
+}
+
 func TestEstimateBillingPrefersTopLevelSecondsOverParametersDuration(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -174,5 +202,31 @@ func TestEstimateBillingPrefersTopLevelSecondsOverParametersDuration(t *testing.
 
 	if got := ratios["seconds"]; got != 8 {
 		t.Fatalf("seconds ratio = %v, want 8", got)
+	}
+}
+
+func TestEstimateBillingPrefersParametersDurationOverInlineContentDuration(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Set("task_request", relaycommon.TaskSubmitReq{
+		Model:  "doubao-seedance-2-0-fast-260128-sdapi",
+		Prompt: "reference based character video",
+		Parameters: map[string]interface{}{
+			"duration": float64(12),
+		},
+		Content: []map[string]interface{}{
+			{
+				"type": "text",
+				"text": "reference based character video --duration=10",
+			},
+		},
+	})
+
+	ratios := (&TaskAdaptor{}).EstimateBilling(c, &relaycommon.RelayInfo{})
+
+	if got := ratios["seconds"]; got != 12 {
+		t.Fatalf("seconds ratio = %v, want 12", got)
 	}
 }
