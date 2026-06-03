@@ -543,6 +543,79 @@ func buildDoubaoOfficialTaskResponse(originTask *model.Task) []byte {
 		return ""
 	}
 
+	firstInt := func(values ...any) int {
+		for _, value := range values {
+			if value == nil {
+				continue
+			}
+			if s, ok := value.(string); ok && strings.TrimSpace(s) == "" {
+				continue
+			}
+			return toInt(value)
+		}
+		return 0
+	}
+
+	firstPositiveInt := func(values ...any) int {
+		for _, value := range values {
+			if n := toInt(value); n > 0 {
+				return n
+			}
+		}
+		return 0
+	}
+
+	toBool := func(v any) (bool, bool) {
+		if v == nil {
+			return false, false
+		}
+		switch b := v.(type) {
+		case bool:
+			return b, true
+		case string:
+			s := strings.TrimSpace(strings.ToLower(b))
+			switch s {
+			case "true", "1", "yes", "y", "on":
+				return true, true
+			case "false", "0", "no", "n", "off":
+				return false, true
+			}
+		case int:
+			return b != 0, true
+		case int64:
+			return b != 0, true
+		case float64:
+			return b != 0, true
+		case json.Number:
+			n, err := b.Int64()
+			if err == nil {
+				return n != 0, true
+			}
+		}
+		return false, false
+	}
+
+	firstBool := func(defaultValue bool, values ...any) bool {
+		for _, value := range values {
+			if b, ok := toBool(value); ok {
+				return b
+			}
+		}
+		return defaultValue
+	}
+
+	copyMap := func(v any) map[string]any {
+		source := asMap(v)
+		if source == nil {
+			return nil
+		}
+		copied := make(map[string]any, len(source))
+		for key, value := range source {
+			copied[key] = value
+		}
+		return copied
+	}
+
 	parseSize := func(size string) (int, int, bool) {
 		size = strings.ToLower(strings.TrimSpace(size))
 		parts := strings.Split(size, "x")
@@ -689,28 +762,92 @@ func buildDoubaoOfficialTaskResponse(originTask *model.Task) []byte {
 		duration = toInt(usage["duration_seconds"])
 	}
 
+	usage := copyMap(upstreamPayload["usage"])
+	if usage == nil {
+		usage = map[string]any{}
+	}
+	if _, ok := usage["completion_tokens"]; !ok {
+		if n := firstPositiveInt(upstreamPayload["completion_tokens"]); n > 0 {
+			usage["completion_tokens"] = n
+		}
+	}
+	if _, ok := usage["total_tokens"]; !ok {
+		if n := firstPositiveInt(upstreamPayload["total_tokens"]); n > 0 {
+			usage["total_tokens"] = n
+		}
+	}
+
+	createdAt := firstPositiveInt(upstreamPayload["created_at"], originTask.CreatedAt, originTask.SubmitTime)
+	updatedAt := firstPositiveInt(upstreamPayload["updated_at"], upstreamPayload["completed_at"], originTask.UpdatedAt, originTask.FinishTime, createdAt)
+	seed := firstInt(upstreamPayload["seed"], metadata["seed"], parameters["seed"])
+	framesPerSecond := firstPositiveInt(
+		upstreamPayload["framespersecond"],
+		upstreamPayload["frames_per_second"],
+		upstreamPayload["fps"],
+		metadata["framespersecond"],
+		metadata["frames_per_second"],
+		metadata["fps"],
+		parameters["framespersecond"],
+		parameters["frames_per_second"],
+		parameters["fps"],
+	)
+	if framesPerSecond == 0 {
+		framesPerSecond = 24
+	}
+	serviceTier := firstString(upstreamPayload["service_tier"], metadata["service_tier"], parameters["service_tier"])
+	if serviceTier == "" {
+		serviceTier = "default"
+	}
+	executionExpiresAfter := firstPositiveInt(upstreamPayload["execution_expires_after"], metadata["execution_expires_after"], parameters["execution_expires_after"])
+	if executionExpiresAfter == 0 {
+		executionExpiresAfter = 172800
+	}
+	generateAudio := firstBool(true, upstreamPayload["generate_audio"], metadata["generate_audio"], parameters["generate_audio"])
+	draft := firstBool(false, upstreamPayload["draft"], metadata["draft"], parameters["draft"])
+	priority := firstInt(upstreamPayload["priority"], metadata["priority"], parameters["priority"])
+
 	respPayload["id"] = originTask.TaskID
 	respPayload["model"] = modelName
 	respPayload["status"] = officialStatus
 	respPayload["content"] = content
+	respPayload["usage"] = usage
+	respPayload["created_at"] = createdAt
+	respPayload["updated_at"] = updatedAt
+	respPayload["seed"] = seed
 	respPayload["resolution"] = resolution
 	respPayload["ratio"] = ratio
 	respPayload["duration"] = duration
+	respPayload["framespersecond"] = framesPerSecond
+	respPayload["service_tier"] = serviceTier
+	respPayload["execution_expires_after"] = executionExpiresAfter
+	respPayload["generate_audio"] = generateAudio
+	respPayload["draft"] = draft
+	respPayload["priority"] = priority
 
 	if out, err := common.Marshal(respPayload); err == nil {
 		return out
 	}
 	fallbackPayload := map[string]any{
-		"code":       dto.TaskSuccessCode,
-		"message":    "",
-		"data":       nil,
-		"id":         originTask.TaskID,
-		"model":      modelName,
-		"status":     officialStatus,
-		"content":    content,
-		"resolution": resolution,
-		"ratio":      ratio,
-		"duration":   duration,
+		"code":                    dto.TaskSuccessCode,
+		"message":                 "",
+		"data":                    nil,
+		"id":                      originTask.TaskID,
+		"model":                   modelName,
+		"status":                  officialStatus,
+		"content":                 content,
+		"usage":                   usage,
+		"created_at":              createdAt,
+		"updated_at":              updatedAt,
+		"seed":                    seed,
+		"resolution":              resolution,
+		"ratio":                   ratio,
+		"duration":                duration,
+		"framespersecond":         framesPerSecond,
+		"service_tier":            serviceTier,
+		"execution_expires_after": executionExpiresAfter,
+		"generate_audio":          generateAudio,
+		"draft":                   draft,
+		"priority":                priority,
 	}
 	out, _ := common.Marshal(fallbackPayload)
 	return out

@@ -83,9 +83,19 @@ func TestBuildDoubaoOfficialTaskResponseKeepLegacyAndOfficialFields(t *testing.T
 			"model":"doubao-seedance-2-0-260128-lyapi",
 			"status":"completed",
 			"video_url":"https://file-vercel-ly-no.aiid.edu.kg/cms_ai_video/3596008094/cgt-20260603141749-4jp4q.mp4",
+			"usage":{"completion_tokens":108900,"total_tokens":108900},
+			"created_at":1779348818,
+			"updated_at":1779348874,
+			"seed":78674,
 			"resolution":"720p",
 			"ratio":"16:9",
-			"duration":5
+			"duration":5,
+			"framespersecond":24,
+			"service_tier":"default",
+			"execution_expires_after":172800,
+			"generate_audio":true,
+			"draft":false,
+			"priority":0
 		}`),
 	}
 
@@ -107,15 +117,30 @@ func TestBuildDoubaoOfficialTaskResponseKeepLegacyAndOfficialFields(t *testing.T
 	content, ok := payload["content"].(map[string]any)
 	require.True(t, ok)
 	require.Equal(t, "https://file-vercel-ly-no.aiid.edu.kg/cms_ai_video/3596008094/cgt-20260603141749-4jp4q.mp4", content["video_url"])
+	usage, ok := payload["usage"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, float64(108900), usage["completion_tokens"])
+	require.Equal(t, float64(108900), usage["total_tokens"])
+	require.Equal(t, float64(1779348818), payload["created_at"])
+	require.Equal(t, float64(1779348874), payload["updated_at"])
+	require.Equal(t, float64(78674), payload["seed"])
 	require.Equal(t, "720p", payload["resolution"])
 	require.Equal(t, "16:9", payload["ratio"])
 	require.Equal(t, float64(5), payload["duration"])
+	require.Equal(t, float64(24), payload["framespersecond"])
+	require.Equal(t, "default", payload["service_tier"])
+	require.Equal(t, float64(172800), payload["execution_expires_after"])
+	require.Equal(t, true, payload["generate_audio"])
+	require.Equal(t, false, payload["draft"])
+	require.Equal(t, float64(0), payload["priority"])
 }
 
 func TestBuildDoubaoOfficialTaskResponseDefaultsMissingResolutionAndRatio(t *testing.T) {
 	task := &model.Task{
-		TaskID: "task_8ytcrEEGJa9NKz2g1zs0BayvWiZ9fdKA",
-		Status: model.TaskStatusSuccess,
+		TaskID:    "task_8ytcrEEGJa9NKz2g1zs0BayvWiZ9fdKA",
+		CreatedAt: 1780467459,
+		UpdatedAt: 1780467794,
+		Status:    model.TaskStatusSuccess,
 		Properties: model.Properties{
 			OriginModelName: "doubao-seedance-2-0-260128",
 		},
@@ -142,9 +167,20 @@ func TestBuildDoubaoOfficialTaskResponseDefaultsMissingResolutionAndRatio(t *tes
 	require.Equal(t, "720p", payload["resolution"])
 	require.Equal(t, "16:9", payload["ratio"])
 	require.Equal(t, float64(4), payload["duration"])
+	require.Equal(t, float64(1780467459), payload["created_at"])
+	require.Equal(t, float64(1780467794), payload["updated_at"])
+	require.Equal(t, float64(24), payload["framespersecond"])
+	require.Equal(t, "default", payload["service_tier"])
+	require.Equal(t, float64(172800), payload["execution_expires_after"])
+	require.Equal(t, true, payload["generate_audio"])
+	require.Equal(t, false, payload["draft"])
+	require.Equal(t, float64(0), payload["priority"])
 
 	content, ok := payload["content"].(map[string]any)
 	require.True(t, ok)
 	require.Equal(t, "https://file-vercel-ly-no.aiid.edu.kg/cms_ai_video/3596008094/cgt-20260603141749-4jp4q.mp4", content["video_url"])
+	usage, ok := payload["usage"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, float64(4), usage["duration_seconds"])
 	require.NotNil(t, payload["data"])
 }
