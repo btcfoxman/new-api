@@ -95,7 +95,9 @@ func TestBuildDoubaoOfficialTaskResponseKeepLegacyAndOfficialFields(t *testing.T
 			"execution_expires_after":172800,
 			"generate_audio":true,
 			"draft":false,
-			"priority":0
+			"priority":0,
+			"tools":[{"type":"web_search"}],
+			"error":null
 		}`),
 	}
 
@@ -133,6 +135,10 @@ func TestBuildDoubaoOfficialTaskResponseKeepLegacyAndOfficialFields(t *testing.T
 	require.Equal(t, true, payload["generate_audio"])
 	require.Equal(t, false, payload["draft"])
 	require.Equal(t, float64(0), payload["priority"])
+	tools, ok := payload["tools"].([]any)
+	require.True(t, ok)
+	require.Len(t, tools, 1)
+	require.Nil(t, payload["error"])
 }
 
 func TestBuildDoubaoOfficialTaskResponseDefaultsMissingResolutionAndRatio(t *testing.T) {
@@ -182,5 +188,48 @@ func TestBuildDoubaoOfficialTaskResponseDefaultsMissingResolutionAndRatio(t *tes
 	usage, ok := payload["usage"].(map[string]any)
 	require.True(t, ok)
 	require.Equal(t, float64(4), usage["duration_seconds"])
+	require.Equal(t, float64(0), usage["completion_tokens"])
+	require.Equal(t, float64(0), usage["total_tokens"])
+	require.NotNil(t, payload["data"])
+}
+
+func TestBuildDoubaoOfficialTaskResponseFailureIncludesOfficialErrorFields(t *testing.T) {
+	task := &model.Task{
+		TaskID:     "task_failed",
+		CreatedAt:  1780467459,
+		UpdatedAt:  1780467794,
+		Status:     model.TaskStatusFailure,
+		FailReason: "blocked by upstream",
+		Properties: model.Properties{
+			OriginModelName: "doubao-seedance-2-0-260128",
+		},
+		Data: []byte(`{
+			"id":"task_failed",
+			"model":"doubao-seedance-2-0-260128-lyapi",
+			"status":"failed",
+			"error":{"code":"content_policy_violation","message":"policy blocked"},
+			"tools":[{"type":"web_search"}]
+		}`),
+	}
+
+	respBody := buildDoubaoOfficialTaskResponse(task)
+
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(respBody, &payload))
+
+	require.Equal(t, "failed", payload["status"])
+	errorObj, ok := payload["error"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "content_policy_violation", errorObj["code"])
+	require.Equal(t, "policy blocked", errorObj["message"])
+
+	usage, ok := payload["usage"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, float64(0), usage["completion_tokens"])
+	require.Equal(t, float64(0), usage["total_tokens"])
+
+	tools, ok := payload["tools"].([]any)
+	require.True(t, ok)
+	require.Len(t, tools, 1)
 	require.NotNil(t, payload["data"])
 }

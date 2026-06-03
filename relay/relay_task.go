@@ -771,10 +771,16 @@ func buildDoubaoOfficialTaskResponse(originTask *model.Task) []byte {
 			usage["completion_tokens"] = n
 		}
 	}
+	if _, ok := usage["completion_tokens"]; !ok {
+		usage["completion_tokens"] = 0
+	}
 	if _, ok := usage["total_tokens"]; !ok {
 		if n := firstPositiveInt(upstreamPayload["total_tokens"]); n > 0 {
 			usage["total_tokens"] = n
 		}
+	}
+	if _, ok := usage["total_tokens"]; !ok {
+		usage["total_tokens"] = 0
 	}
 
 	createdAt := firstPositiveInt(upstreamPayload["created_at"], originTask.CreatedAt, originTask.SubmitTime)
@@ -805,6 +811,25 @@ func buildDoubaoOfficialTaskResponse(originTask *model.Task) []byte {
 	generateAudio := firstBool(true, upstreamPayload["generate_audio"], metadata["generate_audio"], parameters["generate_audio"])
 	draft := firstBool(false, upstreamPayload["draft"], metadata["draft"], parameters["draft"])
 	priority := firstInt(upstreamPayload["priority"], metadata["priority"], parameters["priority"])
+	tools, ok := upstreamPayload["tools"].([]any)
+	if !ok {
+		tools = []any{}
+	}
+	errorObj := copyMap(upstreamPayload["error"])
+	if errorObj == nil && originTask.Status == model.TaskStatusFailure {
+		errorObj = map[string]any{
+			"code":    "failed",
+			"message": strings.TrimSpace(originTask.FailReason),
+		}
+	}
+	if errorObj != nil {
+		if _, ok := errorObj["code"]; !ok {
+			errorObj["code"] = "failed"
+		}
+		if _, ok := errorObj["message"]; !ok {
+			errorObj["message"] = strings.TrimSpace(originTask.FailReason)
+		}
+	}
 
 	respPayload["id"] = originTask.TaskID
 	respPayload["model"] = modelName
@@ -823,6 +848,8 @@ func buildDoubaoOfficialTaskResponse(originTask *model.Task) []byte {
 	respPayload["generate_audio"] = generateAudio
 	respPayload["draft"] = draft
 	respPayload["priority"] = priority
+	respPayload["tools"] = tools
+	respPayload["error"] = errorObj
 
 	if out, err := common.Marshal(respPayload); err == nil {
 		return out
@@ -848,6 +875,8 @@ func buildDoubaoOfficialTaskResponse(originTask *model.Task) []byte {
 		"generate_audio":          generateAudio,
 		"draft":                   draft,
 		"priority":                priority,
+		"tools":                   tools,
+		"error":                   errorObj,
 	}
 	out, _ := common.Marshal(fallbackPayload)
 	return out
