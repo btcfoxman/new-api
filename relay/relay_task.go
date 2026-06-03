@@ -2,6 +2,7 @@ package relay
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -380,6 +381,7 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 	isOpenAIVideoAPI := strings.HasPrefix(c.Request.RequestURI, "/v1/videos/")
 	isAliOfficialTaskAPI := strings.HasPrefix(c.Request.URL.Path, "/api/v1/tasks/")
 	isViduOfficialTaskAPI := strings.HasPrefix(c.Request.URL.Path, "/ent/v2/tasks/")
+	isDoubaoOfficialTaskAPI := strings.HasPrefix(c.Request.URL.Path, "/api/v3/contents/generations/tasks/")
 
 	// Gemini/Vertex 支持实时查询：用户 fetch 时直接从上游拉取最新状态
 	if realtimeResp := tryRealtimeFetch(originTask, isOpenAIVideoAPI); len(realtimeResp) > 0 {
@@ -394,6 +396,11 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 
 	if isAliOfficialTaskAPI {
 		respBody = buildAliOfficialTaskResponse(originTask)
+		return
+	}
+
+	if isDoubaoOfficialTaskAPI {
+		respBody = buildDoubaoOfficialTaskResponse(originTask)
 		return
 	}
 
@@ -459,6 +466,254 @@ func buildViduOfficialTaskResponse(originTask *model.Task) []byte {
 		"creations": []any{},
 	})
 	return data
+}
+
+func buildDoubaoOfficialTaskResponse(originTask *model.Task) []byte {
+	asString := func(v any) string {
+		if v == nil {
+			return ""
+		}
+		s, ok := v.(string)
+		if !ok {
+			return ""
+		}
+		return strings.TrimSpace(s)
+	}
+
+	toInt := func(v any) int {
+		if v == nil {
+			return 0
+		}
+		switch n := v.(type) {
+		case int:
+			return n
+		case int64:
+			return int(n)
+		case float64:
+			return int(n)
+		case string:
+			if n == "" {
+				return 0
+			}
+			i64, err := strconv.Atoi(n)
+			if err == nil {
+				return i64
+			}
+			f64, err := strconv.ParseFloat(n, 64)
+			if err == nil {
+				return int(f64)
+			}
+		case json.Number:
+			i64, err := n.Int64()
+			if err == nil {
+				return int(i64)
+			}
+		}
+		return 0
+	}
+
+	extractVideoURL := func(payload map[string]any, fallback string) string {
+		if payload == nil {
+			return fallback
+		}
+		if v, ok := payload["content"]; ok {
+			if content, ok := v.(map[string]any); ok {
+				if videoURL := asString(content["video_url"]); videoURL != "" {
+					return videoURL
+				}
+			}
+		}
+		if v := asString(payload["video_url"]); v != "" {
+			return v
+		}
+		return strings.TrimSpace(fallback)
+	}
+
+	asMap := func(v any) map[string]any {
+		m, _ := v.(map[string]any)
+		return m
+	}
+
+	firstString := func(values ...any) string {
+		for _, value := range values {
+			if s := asString(value); s != "" {
+				return s
+			}
+		}
+		return ""
+	}
+
+	parseSize := func(size string) (int, int, bool) {
+		size = strings.ToLower(strings.TrimSpace(size))
+		parts := strings.Split(size, "x")
+		if len(parts) != 2 {
+			return 0, 0, false
+		}
+		w, err := strconv.Atoi(strings.TrimSpace(parts[0]))
+		if err != nil || w <= 0 {
+			return 0, 0, false
+		}
+		h, err := strconv.Atoi(strings.TrimSpace(parts[1]))
+		if err != nil || h <= 0 {
+			return 0, 0, false
+		}
+		return w, h, true
+	}
+
+	resolutionFromSize := func(size string) string {
+		w, h, ok := parseSize(size)
+		if !ok {
+			return ""
+		}
+		shortSide := w
+		if h < shortSide {
+			shortSide = h
+		}
+		return strconv.Itoa(shortSide) + "p"
+	}
+
+	ratioFromSize := func(size string) string {
+		w, h, ok := parseSize(size)
+		if !ok {
+			return ""
+		}
+		gcd := func(a, b int) int {
+			for b != 0 {
+				a, b = b, a%b
+			}
+			return a
+		}
+		divisor := gcd(w, h)
+		return strconv.Itoa(w/divisor) + ":" + strconv.Itoa(h/divisor)
+	}
+
+	legacy := dto.TaskResponse[any]{
+		Code:    dto.TaskSuccessCode,
+		Message: "",
+		Data:    TaskModel2Dto(originTask),
+	}
+	legacyResp, _ := common.Marshal(legacy)
+	respPayload := map[string]any{
+		"code":    dto.TaskSuccessCode,
+		"message": "",
+	}
+	if err := common.Unmarshal(legacyResp, &respPayload); err != nil {
+		respPayload["code"] = dto.TaskSuccessCode
+		respPayload["message"] = ""
+		respPayload["data"] = TaskModel2Dto(originTask)
+	}
+
+	var upstreamPayload map[string]any
+	if len(originTask.Data) > 0 {
+		_ = common.Unmarshal(originTask.Data, &upstreamPayload)
+	}
+
+	content := map[string]any{}
+	videoURL := extractVideoURL(upstreamPayload, originTask.GetResultURL())
+	if videoURL != "" {
+		content["video_url"] = videoURL
+	}
+
+	modelName := originTask.Properties.OriginModelName
+	if modelName == "" {
+		if v := asString(upstreamPayload["model"]); v != "" {
+			modelName = v
+		}
+	}
+
+	officialStatus := mapTaskStatusToSimple(originTask.Status)
+	if v := asString(upstreamPayload["status"]); v != "" {
+		switch v {
+		case "completed":
+			officialStatus = "succeeded"
+		case "succeeded", "processing", "running", "queued", "failed":
+			officialStatus = v
+		case "fail":
+			officialStatus = "failed"
+		case "in_progress":
+			officialStatus = "processing"
+		case "not_start", "not started":
+			officialStatus = "queued"
+		default:
+			officialStatus = v
+		}
+	}
+
+	metadata := asMap(upstreamPayload["metadata"])
+	parameters := asMap(upstreamPayload["parameters"])
+	size := firstString(upstreamPayload["size"], metadata["size"], parameters["size"])
+
+	resolution := firstString(
+		upstreamPayload["resolution"],
+		upstreamPayload["quality"],
+		metadata["resolution"],
+		metadata["quality"],
+		parameters["resolution"],
+		parameters["quality"],
+		resolutionFromSize(size),
+	)
+	ratio := firstString(
+		upstreamPayload["ratio"],
+		upstreamPayload["aspect_ratio"],
+		metadata["ratio"],
+		metadata["aspect_ratio"],
+		parameters["ratio"],
+		parameters["aspect_ratio"],
+		ratioFromSize(size),
+	)
+	if resolution == "" {
+		resolution = "720p"
+	}
+	if ratio == "" {
+		ratio = "16:9"
+	}
+
+	duration := toInt(upstreamPayload["duration"])
+	if duration == 0 {
+		duration = toInt(upstreamPayload["seconds"])
+	}
+	if duration == 0 {
+		duration = toInt(metadata["duration"])
+	}
+	if duration == 0 {
+		duration = toInt(metadata["seconds"])
+	}
+	if duration == 0 {
+		duration = toInt(parameters["duration"])
+	}
+	if duration == 0 {
+		duration = toInt(parameters["seconds"])
+	}
+	if duration == 0 {
+		usage := asMap(upstreamPayload["usage"])
+		duration = toInt(usage["duration_seconds"])
+	}
+
+	respPayload["id"] = originTask.TaskID
+	respPayload["model"] = modelName
+	respPayload["status"] = officialStatus
+	respPayload["content"] = content
+	respPayload["resolution"] = resolution
+	respPayload["ratio"] = ratio
+	respPayload["duration"] = duration
+
+	if out, err := common.Marshal(respPayload); err == nil {
+		return out
+	}
+	fallbackPayload := map[string]any{
+		"code":       dto.TaskSuccessCode,
+		"message":    "",
+		"data":       nil,
+		"id":         originTask.TaskID,
+		"model":      modelName,
+		"status":     officialStatus,
+		"content":    content,
+		"resolution": resolution,
+		"ratio":      ratio,
+		"duration":   duration,
+	}
+	out, _ := common.Marshal(fallbackPayload)
+	return out
 }
 
 func buildAliOfficialTaskResponse(originTask *model.Task) []byte {
