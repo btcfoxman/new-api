@@ -5,14 +5,26 @@ import (
 )
 
 type SunoSubmitReq struct {
+	Model                string  `json:"model,omitempty"`
 	GptDescriptionPrompt string  `json:"gpt_description_prompt,omitempty"`
 	Prompt               string  `json:"prompt,omitempty"`
 	Mv                   string  `json:"mv,omitempty"`
+	UpstreamModel        string  `json:"upstream_model,omitempty"`
+	MusicModel           string  `json:"music_model,omitempty"`
+	FreebeatModel        string  `json:"freebeat_model,omitempty"`
+	Engine               string  `json:"engine,omitempty"`
+	ModelID              string  `json:"model_id,omitempty"`
+	ModelIDCamel         string  `json:"modelId,omitempty"`
 	Title                string  `json:"title,omitempty"`
 	Tags                 string  `json:"tags,omitempty"`
 	ContinueAt           float64 `json:"continue_at,omitempty"`
 	TaskID               string  `json:"task_id,omitempty"`
 	ContinueClipId       string  `json:"continue_clip_id,omitempty"`
+	CustomMode           bool    `json:"customMode,omitempty"`
+	CustomModeSnake      bool    `json:"custom_mode,omitempty"`
+	Instrumental         bool    `json:"instrumental,omitempty"`
+	LightMusic           bool    `json:"light_music,omitempty"`
+	PureMusic            bool    `json:"pure_music,omitempty"`
 	MakeInstrumental     bool    `json:"make_instrumental"`
 }
 

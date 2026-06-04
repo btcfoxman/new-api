@@ -152,10 +152,23 @@ func (a *TaskAdaptor) FetchTask(baseUrl, key string, body map[string]any, proxy 
 func actionValidate(c *gin.Context, sunoRequest *dto.SunoSubmitReq, action string) (err error) {
 	switch action {
 	case constant.SunoActionMusic:
-		if sunoRequest.Mv == "" {
+		if sunoRequest.Model == "" {
+			sunoRequest.Model = "suno_music"
+		}
+		hasExplicitMusicModel := sunoRequest.UpstreamModel != "" ||
+			sunoRequest.MusicModel != "" ||
+			sunoRequest.FreebeatModel != "" ||
+			sunoRequest.Engine != "" ||
+			sunoRequest.ModelID != "" ||
+			sunoRequest.ModelIDCamel != "" ||
+			sunoRequest.Mv != ""
+		if !hasExplicitMusicModel {
 			sunoRequest.Mv = "chirp-v3-0"
 		}
 	case constant.SunoActionLyrics:
+		if sunoRequest.Model == "" {
+			sunoRequest.Model = "suno_lyrics"
+		}
 		if sunoRequest.Prompt == "" {
 			err = fmt.Errorf("prompt_empty")
 			return
