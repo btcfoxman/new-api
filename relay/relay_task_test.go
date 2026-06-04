@@ -218,6 +218,9 @@ func TestBuildDoubaoOfficialTaskResponseFailureIncludesOfficialErrorFields(t *te
 	require.NoError(t, json.Unmarshal(respBody, &payload))
 
 	require.Equal(t, "failed", payload["status"])
+	require.Equal(t, "success", payload["code"])
+	require.Equal(t, "", payload["message"])
+	require.NotNil(t, payload["data"])
 	errorObj, ok := payload["error"].(map[string]any)
 	require.True(t, ok)
 	require.Equal(t, "content_policy_violation", errorObj["code"])
@@ -231,5 +234,4 @@ func TestBuildDoubaoOfficialTaskResponseFailureIncludesOfficialErrorFields(t *te
 	tools, ok := payload["tools"].([]any)
 	require.True(t, ok)
 	require.Len(t, tools, 1)
-	require.NotNil(t, payload["data"])
 }

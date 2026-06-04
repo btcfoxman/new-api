@@ -850,6 +850,9 @@ func buildDoubaoOfficialTaskResponse(originTask *model.Task) []byte {
 	respPayload["priority"] = priority
 	respPayload["tools"] = tools
 	respPayload["error"] = errorObj
+	respPayload["code"] = dto.TaskSuccessCode
+	respPayload["message"] = ""
+	respPayload["data"] = TaskModel2Dto(originTask)
 
 	if out, err := common.Marshal(respPayload); err == nil {
 		return out
@@ -857,7 +860,7 @@ func buildDoubaoOfficialTaskResponse(originTask *model.Task) []byte {
 	fallbackPayload := map[string]any{
 		"code":                    dto.TaskSuccessCode,
 		"message":                 "",
-		"data":                    nil,
+		"data":                    TaskModel2Dto(originTask),
 		"id":                      originTask.TaskID,
 		"model":                   modelName,
 		"status":                  officialStatus,
