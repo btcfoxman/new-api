@@ -179,6 +179,83 @@ func (i *ImageRequest) SetModelName(modelName string) {
 	}
 }
 
+func (i *ImageRequest) NormalizeImageReferenceFields() {
+	i.Image = normalizeImageRawMessage(i.Image)
+	i.ImageURL = normalizeImageRawMessage(i.ImageURL)
+	i.ImageURLs = normalizeImageRawMessage(i.ImageURLs)
+	i.Images = normalizeImageRawMessage(i.Images)
+	i.ReferenceImage = normalizeImageRawMessage(i.ReferenceImage)
+	i.ReferenceImages = normalizeImageRawMessage(i.ReferenceImages)
+	i.InputReference = normalizeImageRawMessage(i.InputReference)
+	i.InputImage = normalizeImageRawMessage(i.InputImage)
+	i.InputImages = normalizeImageRawMessage(i.InputImages)
+	i.ImageList = normalizeImageRawMessage(i.ImageList)
+	i.URLs = normalizeImageRawMessage(i.URLs)
+}
+
+func normalizeImageRawMessage(raw json.RawMessage) json.RawMessage {
+	if len(raw) == 0 {
+		return raw
+	}
+	var value any
+	if err := common.Unmarshal(raw, &value); err != nil {
+		return raw
+	}
+	normalized, keep := normalizeImageReferenceValue(value)
+	if !keep {
+		return nil
+	}
+	encoded, err := common.Marshal(normalized)
+	if err != nil {
+		return raw
+	}
+	return encoded
+}
+
+func normalizeImageReferenceValue(value any) (any, bool) {
+	switch typed := value.(type) {
+	case nil:
+		return nil, false
+	case string:
+		trimmed := strings.TrimSpace(typed)
+		if trimmed == "" {
+			return nil, false
+		}
+		return trimmed, true
+	case []any:
+		items := make([]any, 0, len(typed))
+		for _, item := range typed {
+			normalized, keep := normalizeImageReferenceValue(item)
+			if keep {
+				items = append(items, normalized)
+			}
+		}
+		if len(items) == 0 {
+			return nil, false
+		}
+		return items, true
+	case map[string]any:
+		sawImageKey := false
+		for _, key := range []string{"url", "image_url", "uri", "b64_json"} {
+			if raw, ok := typed[key]; ok {
+				sawImageKey = true
+				normalized, keep := normalizeImageReferenceValue(raw)
+				if keep {
+					typed[key] = normalized
+					return typed, true
+				}
+				delete(typed, key)
+			}
+		}
+		if sawImageKey {
+			return nil, false
+		}
+		return typed, len(typed) > 0
+	default:
+		return value, true
+	}
+}
+
 type ImageResponse struct {
 	Data     []ImageData     `json:"data"`
 	Created  int64           `json:"created"`

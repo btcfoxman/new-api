@@ -570,8 +570,14 @@ func OpenaiHandlerWithUsage(c *gin.Context, info *relaycommon.RelayInfo, resp *h
 	if err != nil {
 		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 	}
+	if oaiError := usageResp.GetOpenAIError(); oaiError != nil && (oaiError.Type != "" || oaiError.Message != "") {
+		return nil, types.WithOpenAIError(*oaiError, resp.StatusCode)
+	}
+	if !imageResponseHasResult(responseBody) {
+		return nil, types.NewOpenAIError(fmt.Errorf("upstream image response returned no image data"), types.ErrorCodeBadResponseBody, http.StatusBadGateway)
+	}
 
-	// 写入新的 response body
+	// write response body only after validating it contains image data
 	service.IOCopyBytesGracefully(c, resp, responseBody)
 
 	// Once we've written to the client, we should not return errors anymore
@@ -592,6 +598,21 @@ func OpenaiHandlerWithUsage(c *gin.Context, info *relaycommon.RelayInfo, resp *h
 	return &usageResp.Usage, nil
 }
 
+func imageResponseHasResult(responseBody []byte) bool {
+	var imageResp dto.ImageResponse
+	if err := common.Unmarshal(responseBody, &imageResp); err != nil {
+		return false
+	}
+	if len(imageResp.Data) == 0 {
+		return false
+	}
+	for _, item := range imageResp.Data {
+		if item.Url != "" || item.B64Json != "" {
+			return true
+		}
+	}
+	return false
+}
 func applyUsagePostProcessing(info *relaycommon.RelayInfo, usage *dto.Usage, responseBody []byte) {
 	if info == nil || usage == nil {
 		return
