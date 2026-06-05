@@ -161,6 +161,14 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 }
 
 func ResponsesRetrieveHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types.NewAPIError) {
+	if info == nil {
+		return types.NewErrorWithStatusCode(
+			fmt.Errorf("relay info is nil"),
+			types.ErrorCodeInvalidRequest,
+			http.StatusBadRequest,
+			types.ErrOptionWithSkipRetry(),
+		)
+	}
 	info.InitChannelMeta(c)
 
 	adaptor := GetAdaptor(info.ApiType)
@@ -173,9 +181,15 @@ func ResponsesRetrieveHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAP
 	if err != nil {
 		return types.NewOpenAIError(err, types.ErrorCodeDoRequestFailed, http.StatusInternalServerError)
 	}
+	if resp == nil {
+		return types.NewOpenAIError(fmt.Errorf("upstream response is nil"), types.ErrorCodeBadResponse, http.StatusInternalServerError)
+	}
 
 	statusCodeMappingStr := c.GetString("status_code_mapping")
-	httpResp := resp.(*http.Response)
+	httpResp, ok := resp.(*http.Response)
+	if !ok || httpResp == nil {
+		return types.NewOpenAIError(fmt.Errorf("invalid upstream response type: %T", resp), types.ErrorCodeBadResponse, http.StatusInternalServerError)
+	}
 	if httpResp.StatusCode != http.StatusOK {
 		newAPIError = service.RelayErrorHandler(c.Request.Context(), httpResp, false)
 		service.ResetStatusCode(newAPIError, statusCodeMappingStr)

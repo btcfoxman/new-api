@@ -36,7 +36,7 @@ func responsesRouteCacheKey(responseID string) string {
 }
 
 func RecordResponsesRouteInfo(responseID string, info *relaycommon.RelayInfo) {
-	if responseID == "" || info == nil || info.ChannelId <= 0 {
+	if responseID == "" || info == nil || info.ChannelMeta == nil || info.ChannelId <= 0 {
 		return
 	}
 	routeInfo := ResponsesRouteInfo{

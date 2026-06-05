@@ -55,7 +55,7 @@ func Distribute() func(c *gin.Context) {
 			// Select a channel for the user
 			// check token model mapping
 			modelLimitEnable := common.GetContextKeyBool(c, constant.ContextKeyTokenModelLimitEnabled)
-			if modelLimitEnable {
+			if modelLimitEnable && shouldSelectChannel {
 				s, ok := common.GetContextKey(c, constant.ContextKeyTokenModelLimit)
 				if !ok {
 					// token model limit is empty, all models are not allowed
@@ -156,7 +156,15 @@ func Distribute() func(c *gin.Context) {
 			}
 		}
 		common.SetContextKey(c, constant.ContextKeyRequestStartTime, time.Now())
-		SetupContextForSelectedChannel(c, channel, modelRequest.Model)
+		if channel != nil {
+			if apiErr := SetupContextForSelectedChannel(c, channel, modelRequest.Model); apiErr != nil {
+				abortWithOpenAiMessage(c, http.StatusServiceUnavailable, apiErr.Error(), types.ErrorCodeGetChannelFailed)
+				return
+			}
+		} else if shouldSelectChannel {
+			abortWithOpenAiMessage(c, http.StatusServiceUnavailable, "channel is nil", types.ErrorCodeGetChannelFailed)
+			return
+		}
 		c.Next()
 		if channel != nil && c.Writer != nil && c.Writer.Status() < http.StatusBadRequest {
 			service.RecordChannelAffinity(c, channel.Id)
@@ -485,4 +493,3 @@ func extractModelNameFromGeminiPath(path string) string {
 	// 返回模型名部分
 	return path[startIndex : startIndex+colonIndex]
 }
-

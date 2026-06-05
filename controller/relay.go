@@ -308,6 +308,15 @@ func RelayResponsesFetch(c *gin.Context) {
 		)
 		return
 	}
+	if channel == nil {
+		newAPIError = types.NewErrorWithStatusCode(
+			fmt.Errorf("response route channel %d not found", routeInfo.ChannelId),
+			types.ErrorCodeGetChannelFailed,
+			http.StatusServiceUnavailable,
+			types.ErrOptionWithSkipRetry(),
+		)
+		return
+	}
 	if channel.Status != common.ChannelStatusEnabled {
 		newAPIError = types.NewErrorWithStatusCode(
 			fmt.Errorf("response route channel %d is disabled", routeInfo.ChannelId),
