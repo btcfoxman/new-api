@@ -21,6 +21,14 @@ import (
 )
 
 func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types.NewAPIError) {
+	if info == nil {
+		return types.NewErrorWithStatusCode(
+			fmt.Errorf("relay info is nil"),
+			types.ErrorCodeInvalidRequest,
+			http.StatusBadRequest,
+			types.ErrOptionWithSkipRetry(),
+		)
+	}
 	info.InitChannelMeta(c)
 	if info.RelayMode == relayconstant.RelayModeResponsesCompact {
 		switch info.ApiType {
@@ -117,7 +125,11 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 	statusCodeMappingStr := c.GetString("status_code_mapping")
 
 	if resp != nil {
-		httpResp = resp.(*http.Response)
+		var ok bool
+		httpResp, ok = resp.(*http.Response)
+		if !ok || httpResp == nil {
+			return types.NewOpenAIError(fmt.Errorf("invalid upstream response type: %T", resp), types.ErrorCodeBadResponse, http.StatusInternalServerError)
+		}
 
 		if httpResp.StatusCode != http.StatusOK {
 			newAPIError = service.RelayErrorHandler(c.Request.Context(), httpResp, false)
@@ -134,7 +146,10 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 		return newAPIError
 	}
 
-	usageDto := usage.(*dto.Usage)
+	usageDto, ok := usage.(*dto.Usage)
+	if !ok || usageDto == nil {
+		usageDto = &dto.Usage{}
+	}
 	if info.RelayMode == relayconstant.RelayModeResponsesCompact {
 		originModelName := info.OriginModelName
 		originPriceData := info.PriceData

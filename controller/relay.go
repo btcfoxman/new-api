@@ -266,6 +266,17 @@ func RelayResponsesFetch(c *gin.Context) {
 			})
 		}
 	}()
+	defer func() {
+		if r := recover(); r != nil {
+			logger.LogError(c, fmt.Sprintf("relay responses fetch panic: %v", r))
+			newAPIError = types.NewErrorWithStatusCode(
+				fmt.Errorf("failed to fetch response"),
+				types.ErrorCodeBadResponse,
+				http.StatusInternalServerError,
+				types.ErrOptionWithSkipRetry(),
+			)
+		}
+	}()
 
 	responseID := strings.TrimSpace(c.Param("response_id"))
 	if responseID == "" {

@@ -33,6 +33,7 @@ type SunoDataResponse struct {
 	Action     string          `json:"action" gorm:"type:varchar(40);index"` // 任务类型, song, lyrics, description-mode
 	Status     string          `json:"status" gorm:"type:varchar(20);index"` // 任务状态, submitted, queueing, processing, success, failed
 	FailReason string          `json:"fail_reason"`
+	Progress   string          `json:"progress"`
 	SubmitTime int64           `json:"submit_time" gorm:"index"`
 	StartTime  int64           `json:"start_time" gorm:"index"`
 	FinishTime int64           `json:"finish_time" gorm:"index"`

@@ -328,6 +328,9 @@ func sunoFetchRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *dto.Ta
 			return
 		}
 		for _, task := range taskModels {
+			if !isTaskTerminal(task) {
+				_ = service.FetchAndUpdateSunoTask(c.Request.Context(), task)
+			}
 			tasks = append(tasks, TaskModel2Dto(task))
 		}
 	} else {
@@ -353,12 +356,19 @@ func sunoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *dt
 		taskResp = service.TaskErrorWrapperLocal(errors.New("task_not_exist"), "task_not_exist", http.StatusBadRequest)
 		return
 	}
+	if !isTaskTerminal(originTask) {
+		_ = service.FetchAndUpdateSunoTask(c.Request.Context(), originTask)
+	}
 
 	respBody, err = common.Marshal(dto.TaskResponse[any]{
 		Code: "success",
 		Data: TaskModel2Dto(originTask),
 	})
 	return
+}
+
+func isTaskTerminal(task *model.Task) bool {
+	return task != nil && (task.Status == model.TaskStatusSuccess || task.Status == model.TaskStatusFailure)
 }
 
 func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *dto.TaskError) {

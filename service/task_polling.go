@@ -187,70 +187,169 @@ func updateSunoTasks(ctx context.Context, channelId int, taskIds []string, taskM
 		}
 		return err
 	}
+	if GetTaskAdaptorFunc == nil {
+		return errors.New("task adaptor func not found")
+	}
 	adaptor := GetTaskAdaptorFunc(constant.TaskPlatformSuno)
 	if adaptor == nil {
 		return errors.New("adaptor not found")
 	}
-	proxy := ch.GetSetting().Proxy
-	resp, err := adaptor.FetchTask(*ch.BaseURL, ch.Key, map[string]any{
-		"ids": taskIds,
-	}, proxy)
-	if err != nil {
-		common.SysLog(fmt.Sprintf("Get Task Do req error: %v", err))
-		return err
-	}
-	if resp.StatusCode != http.StatusOK {
-		logger.LogError(ctx, fmt.Sprintf("Get Task status code: %d", resp.StatusCode))
-		return fmt.Errorf("Get Task status code: %d", resp.StatusCode)
-	}
-	defer resp.Body.Close()
-	responseBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		common.SysLog(fmt.Sprintf("Get Suno Task parse body error: %v", err))
-		return err
-	}
-	var responseItems dto.TaskResponse[[]dto.SunoDataResponse]
-	err = common.Unmarshal(responseBody, &responseItems)
-	if err != nil {
-		logger.LogError(ctx, fmt.Sprintf("Get Suno Task parse body error2: %v, body: %s", err, string(responseBody)))
-		return err
-	}
-	if !responseItems.IsSuccess() {
-		common.SysLog(fmt.Sprintf("渠道 #%d 未完成的任务有: %d, 成功获取到任务数: %s", channelId, len(taskIds), string(responseBody)))
-		return err
-	}
-
-	for _, responseItem := range responseItems.Data {
-		task := taskM[responseItem.TaskID]
-		if !taskNeedsUpdate(task, responseItem) {
+	for _, upstreamID := range taskIds {
+		task := taskM[upstreamID]
+		if task == nil {
+			logger.LogError(ctx, fmt.Sprintf("Suno task %s not found in taskM", upstreamID))
 			continue
 		}
-
-		task.Status = lo.If(model.TaskStatus(responseItem.Status) != "", model.TaskStatus(responseItem.Status)).Else(task.Status)
-		task.FailReason = lo.If(responseItem.FailReason != "", responseItem.FailReason).Else(task.FailReason)
-		task.SubmitTime = lo.If(responseItem.SubmitTime != 0, responseItem.SubmitTime).Else(task.SubmitTime)
-		task.StartTime = lo.If(responseItem.StartTime != 0, responseItem.StartTime).Else(task.StartTime)
-		task.FinishTime = lo.If(responseItem.FinishTime != 0, responseItem.FinishTime).Else(task.FinishTime)
-		if responseItem.FailReason != "" || task.Status == model.TaskStatusFailure {
-			logger.LogInfo(ctx, task.TaskID+" 构建失败，"+task.FailReason)
-			task.Progress = "100%"
-			RefundTaskQuota(ctx, task, task.FailReason)
+		if err := fetchAndUpdateSunoTask(ctx, adaptor, ch, task); err != nil {
+			logger.LogError(ctx, fmt.Sprintf("UpdateSunoTask task %s error: %v", task.TaskID, err))
 		}
-		if responseItem.Status == model.TaskStatusSuccess {
-			task.Progress = "100%"
-		}
-		task.Data = responseItem.Data
-
-		err = task.Update()
-		if err != nil {
-			common.SysLog("UpdateSunoTask task error: " + err.Error())
-		}
+		time.Sleep(1 * time.Second)
 	}
 	return nil
 }
 
-// taskNeedsUpdate 检查 Suno 任务是否需要更新
+// FetchAndUpdateSunoTask fetches one Suno upstream task and persists the latest state.
+func FetchAndUpdateSunoTask(ctx context.Context, task *model.Task) error {
+	if task == nil {
+		return errors.New("task is nil")
+	}
+	ch, err := model.CacheGetChannel(task.ChannelId)
+	if err != nil {
+		return err
+	}
+	if GetTaskAdaptorFunc == nil {
+		return errors.New("task adaptor func not found")
+	}
+	adaptor := GetTaskAdaptorFunc(constant.TaskPlatformSuno)
+	if adaptor == nil {
+		return errors.New("adaptor not found")
+	}
+	return fetchAndUpdateSunoTask(ctx, adaptor, ch, task)
+}
+
+func fetchAndUpdateSunoTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *model.Channel, task *model.Task) error {
+	if ch == nil {
+		return errors.New("channel is nil")
+	}
+	upstreamID := task.GetUpstreamTaskID()
+	if strings.TrimSpace(upstreamID) == "" {
+		return errors.New("upstream task id is empty")
+	}
+	baseURL := sunoChannelBaseURL(ch)
+	if strings.TrimSpace(baseURL) == "" {
+		return errors.New("channel base url is empty")
+	}
+	key := ch.Key
+	if task.PrivateData.Key != "" {
+		key = task.PrivateData.Key
+	}
+	resp, err := adaptor.FetchTask(baseURL, key, map[string]any{
+		"task_id": upstreamID,
+		"id":      upstreamID,
+	}, ch.GetSetting().Proxy)
+	if err != nil {
+		return fmt.Errorf("fetchTask failed for task %s: %w", task.TaskID, err)
+	}
+	defer resp.Body.Close()
+	responseBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("readAll failed for task %s: %w", task.TaskID, err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("Get Task status code: %d, body: %s", resp.StatusCode, string(responseBody))
+	}
+
+	responseItems, err := decodeSunoTaskItems(responseBody)
+	if err != nil {
+		return err
+	}
+	for _, responseItem := range responseItems {
+		if responseItem.TaskID == "" {
+			responseItem.TaskID = upstreamID
+		}
+		if responseItem.TaskID != upstreamID && len(responseItems) > 1 {
+			continue
+		}
+		return applySunoTaskResponse(ctx, task, responseItem)
+	}
+	return nil
+}
+
+func sunoChannelBaseURL(ch *model.Channel) string {
+	if ch == nil {
+		return ""
+	}
+	if baseURL := ch.GetBaseURL(); baseURL != "" {
+		return baseURL
+	}
+	if ch.BaseURL != nil {
+		return *ch.BaseURL
+	}
+	return constant.ChannelBaseURLs[ch.Type]
+}
+
+func decodeSunoTaskItems(responseBody []byte) ([]dto.SunoDataResponse, error) {
+	var single dto.TaskResponse[dto.SunoDataResponse]
+	if err := common.Unmarshal(responseBody, &single); err == nil {
+		if single.IsSuccess() {
+			return []dto.SunoDataResponse{single.Data}, nil
+		}
+		if single.Code != "" {
+			return nil, fmt.Errorf("Get Suno Task failed: %s", single.Message)
+		}
+	}
+
+	var list dto.TaskResponse[[]dto.SunoDataResponse]
+	if err := common.Unmarshal(responseBody, &list); err != nil {
+		return nil, fmt.Errorf("Get Suno Task parse body error: %w, body: %s", err, string(responseBody))
+	}
+	if !list.IsSuccess() {
+		return nil, fmt.Errorf("Get Suno Task failed: %s", list.Message)
+	}
+	return list.Data, nil
+}
+
+func applySunoTaskResponse(ctx context.Context, task *model.Task, responseItem dto.SunoDataResponse) error {
+	if task == nil {
+		return errors.New("task is nil")
+	}
+	if !taskNeedsUpdate(task, responseItem) {
+		return nil
+	}
+
+	newStatus := normalizeSunoTaskStatus(responseItem.Status)
+	if newStatus != "" {
+		task.Status = newStatus
+	}
+	task.FailReason = lo.If(responseItem.FailReason != "", responseItem.FailReason).Else(task.FailReason)
+	task.SubmitTime = lo.If(responseItem.SubmitTime != 0, responseItem.SubmitTime).Else(task.SubmitTime)
+	task.StartTime = lo.If(responseItem.StartTime != 0, responseItem.StartTime).Else(task.StartTime)
+	task.FinishTime = lo.If(responseItem.FinishTime != 0, responseItem.FinishTime).Else(task.FinishTime)
+	if responseItem.Progress != "" {
+		task.Progress = responseItem.Progress
+	}
+	if responseItem.FailReason != "" || task.Status == model.TaskStatusFailure {
+		logger.LogInfo(ctx, task.TaskID+" build failed, "+task.FailReason)
+		task.Progress = "100%"
+		RefundTaskQuota(ctx, task, task.FailReason)
+	}
+	if task.Status == model.TaskStatusSuccess {
+		task.Progress = "100%"
+	}
+	task.Data = responseItem.Data
+
+	if err := task.Update(); err != nil {
+		common.SysLog("UpdateSunoTask task error: " + err.Error())
+		return err
+	}
+	return nil
+}
+
+// taskNeedsUpdate
 func taskNeedsUpdate(oldTask *model.Task, newTask dto.SunoDataResponse) bool {
+	if oldTask == nil {
+		return false
+	}
 	if oldTask.SubmitTime != newTask.SubmitTime {
 		return true
 	}
@@ -260,10 +359,17 @@ func taskNeedsUpdate(oldTask *model.Task, newTask dto.SunoDataResponse) bool {
 	if oldTask.FinishTime != newTask.FinishTime {
 		return true
 	}
-	if string(oldTask.Status) != newTask.Status {
+	newStatus := normalizeSunoTaskStatus(newTask.Status)
+	if newStatus != "" && oldTask.Status != newStatus {
+		return true
+	}
+	if newStatus == "" && newTask.Status != "" && string(oldTask.Status) != newTask.Status {
 		return true
 	}
 	if oldTask.FailReason != newTask.FailReason {
+		return true
+	}
+	if newTask.Progress != "" && oldTask.Progress != newTask.Progress {
 		return true
 	}
 
@@ -285,6 +391,27 @@ func taskNeedsUpdate(oldTask *model.Task, newTask dto.SunoDataResponse) bool {
 		return true
 	}
 	return false
+}
+
+func normalizeSunoTaskStatus(status string) model.TaskStatus {
+	switch strings.ToUpper(strings.TrimSpace(status)) {
+	case "":
+		return ""
+	case "SUCCESS", "SUCCEEDED", "COMPLETED", "COMPLETE":
+		return model.TaskStatusSuccess
+	case "FAILURE", "FAILED", "FAIL":
+		return model.TaskStatusFailure
+	case "SUBMITTED":
+		return model.TaskStatusSubmitted
+	case "QUEUED", "QUEUEING", "PENDING":
+		return model.TaskStatusQueued
+	case "PROCESSING", "POLLING", "RUNNING", "IN_PROGRESS":
+		return model.TaskStatusInProgress
+	case "NOT_START":
+		return model.TaskStatusNotStart
+	default:
+		return model.TaskStatus(strings.ToUpper(strings.TrimSpace(status)))
+	}
 }
 
 // UpdateVideoTasks 按渠道更新所有视频任务
