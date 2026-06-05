@@ -262,6 +262,9 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 		if _, ok := c.Get("relay_mode"); !ok {
 			c.Set("relay_mode", relayMode)
 		}
+	} else if strings.HasPrefix(c.Request.URL.Path, "/v1/responses/") && c.Request.Method == http.MethodGet {
+		c.Set("relay_mode", relayconstant.RelayModeResponses)
+		shouldSelectChannel = false
 	} else if strings.HasPrefix(c.Request.URL.Path, "/api/v3/contents/generations/tasks") {
 		relayMode := relayconstant.RelayModeUnknown
 		if c.Request.Method == http.MethodPost && c.Request.URL.Path == "/api/v3/contents/generations/tasks" {
@@ -482,3 +485,4 @@ func extractModelNameFromGeminiPath(path string) string {
 	// 返回模型名部分
 	return path[startIndex : startIndex+colonIndex]
 }
+

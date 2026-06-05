@@ -159,3 +159,33 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 	}
 	return nil
 }
+
+func ResponsesRetrieveHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types.NewAPIError) {
+	info.InitChannelMeta(c)
+
+	adaptor := GetAdaptor(info.ApiType)
+	if adaptor == nil {
+		return types.NewError(fmt.Errorf("invalid api type: %d", info.ApiType), types.ErrorCodeInvalidApiType, types.ErrOptionWithSkipRetry())
+	}
+	adaptor.Init(info)
+
+	resp, err := adaptor.DoRequest(c, info, nil)
+	if err != nil {
+		return types.NewOpenAIError(err, types.ErrorCodeDoRequestFailed, http.StatusInternalServerError)
+	}
+
+	statusCodeMappingStr := c.GetString("status_code_mapping")
+	httpResp := resp.(*http.Response)
+	if httpResp.StatusCode != http.StatusOK {
+		newAPIError = service.RelayErrorHandler(c.Request.Context(), httpResp, false)
+		service.ResetStatusCode(newAPIError, statusCodeMappingStr)
+		return newAPIError
+	}
+
+	_, newAPIError = adaptor.DoResponse(c, httpResp, info)
+	if newAPIError != nil {
+		service.ResetStatusCode(newAPIError, statusCodeMappingStr)
+		return newAPIError
+	}
+	return nil
+}

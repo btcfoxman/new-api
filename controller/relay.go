@@ -254,6 +254,86 @@ func addUsedChannel(c *gin.Context, channelId int) {
 	c.Set("use_channel", useChannel)
 }
 
+func RelayResponsesFetch(c *gin.Context) {
+	requestId := c.GetString(common.RequestIdKey)
+	var newAPIError *types.NewAPIError
+	defer func() {
+		if newAPIError != nil {
+			logger.LogError(c, fmt.Sprintf("relay responses fetch error: %s", newAPIError.Error()))
+			newAPIError.SetMessage(common.MessageWithRequestId(newAPIError.Error(), requestId))
+			c.JSON(newAPIError.StatusCode, gin.H{
+				"error": newAPIError.ToOpenAIError(),
+			})
+		}
+	}()
+
+	responseID := strings.TrimSpace(c.Param("response_id"))
+	if responseID == "" {
+		newAPIError = types.NewErrorWithStatusCode(
+			fmt.Errorf("response_id is required"),
+			types.ErrorCodeInvalidRequest,
+			http.StatusBadRequest,
+			types.ErrOptionWithSkipRetry(),
+		)
+		return
+	}
+
+	routeInfo, found, err := service.GetResponsesRouteInfo(responseID)
+	if err != nil {
+		newAPIError = types.NewErrorWithStatusCode(
+			fmt.Errorf("failed to load response route info: %w", err),
+			types.ErrorCodeInvalidRequest,
+			http.StatusInternalServerError,
+			types.ErrOptionWithSkipRetry(),
+		)
+		return
+	}
+	if !found {
+		newAPIError = types.NewErrorWithStatusCode(
+			fmt.Errorf("response route info not found for %s; create the response again or query before the route cache expires", responseID),
+			types.ErrorCodeInvalidRequest,
+			http.StatusNotFound,
+			types.ErrOptionWithSkipRetry(),
+		)
+		return
+	}
+
+	channel, err := model.GetChannelById(routeInfo.ChannelId, true)
+	if err != nil {
+		newAPIError = types.NewErrorWithStatusCode(
+			fmt.Errorf("failed to load response route channel %d: %w", routeInfo.ChannelId, err),
+			types.ErrorCodeGetChannelFailed,
+			http.StatusServiceUnavailable,
+			types.ErrOptionWithSkipRetry(),
+		)
+		return
+	}
+	if channel.Status != common.ChannelStatusEnabled {
+		newAPIError = types.NewErrorWithStatusCode(
+			fmt.Errorf("response route channel %d is disabled", routeInfo.ChannelId),
+			types.ErrorCodeGetChannelFailed,
+			http.StatusForbidden,
+			types.ErrOptionWithSkipRetry(),
+		)
+		return
+	}
+
+	if apiErr := middleware.SetupContextForSelectedChannel(c, channel, routeInfo.Model); apiErr != nil {
+		newAPIError = apiErr
+		return
+	}
+	c.Set("relay_mode", relayconstant.RelayModeResponses)
+	addUsedChannel(c, channel.Id)
+
+	request := &dto.OpenAIResponsesRequest{Model: routeInfo.Model}
+	relayInfo := relaycommon.GenRelayInfoResponses(c, request)
+	relayInfo.RelayMode = relayconstant.RelayModeResponses
+	relayInfo.RequestURLPath = c.Request.URL.String()
+	relayInfo.SetEstimatePromptTokens(0)
+
+	newAPIError = relay.ResponsesRetrieveHelper(c, relayInfo)
+}
+
 func fastTokenCountMetaForPricing(request dto.Request) *types.TokenCountMeta {
 	if request == nil {
 		return &types.TokenCountMeta{}

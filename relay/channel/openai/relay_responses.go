@@ -41,6 +41,9 @@ func OaiResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 	}
 
 	// 写入新的 response body
+	if responsesResponse.ID != "" {
+		service.RecordResponsesRouteInfo(responsesResponse.ID, info)
+	}
 	service.IOCopyBytesGracefully(c, resp, responseBody)
 
 	// compute usage

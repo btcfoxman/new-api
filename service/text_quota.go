@@ -189,7 +189,10 @@ func calculateTextQuotaSummary(ctx *gin.Context, relayInfo *relaycommon.RelayInf
 	}
 
 	var dImageGenerationCallQuota decimal.Decimal
-	if ctx.GetBool("image_generation_call") {
+	// Fixed-price image models are charged by model price, matching
+	// /v1/images/generations and /v1/images/edits. Do not stack the
+	// Responses image_generation_call tool fee on top of the model price.
+	if ctx.GetBool("image_generation_call") && !relayInfo.PriceData.UsePrice {
 		summary.ImageGenerationCallPrice = operation_setting.GetGPTImage1PriceOnceCall(ctx.GetString("image_generation_call_quality"), ctx.GetString("image_generation_call_size"))
 		dImageGenerationCallQuota = decimal.NewFromFloat(summary.ImageGenerationCallPrice).Mul(dGroupRatio).Mul(dQuotaPerUnit)
 	}
@@ -272,7 +275,13 @@ func calculateTextQuotaSummary(ctx *gin.Context, relayInfo *relaycommon.RelayInf
 		summary.Quota = int(quotaCalculateDecimal.Round(0).IntPart())
 	}
 
-	if summary.TotalTokens == 0 {
+	hasNonTokenCharge := relayInfo.PriceData.UsePrice ||
+		summary.WebSearchCallCount > 0 ||
+		summary.ClaudeWebSearchCallCount > 0 ||
+		summary.FileSearchCallCount > 0 ||
+		summary.ImageGenerationCallPrice > 0 ||
+		(summary.AudioInputPrice > 0 && summary.AudioTokens > 0)
+	if summary.TotalTokens == 0 && !hasNonTokenCharge {
 		summary.Quota = 0
 	} else if !ratio.IsZero() && summary.Quota == 0 {
 		summary.Quota = 1
@@ -319,7 +328,7 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 		extraContent = append(extraContent, fmt.Sprintf("Image Generation Call 花费 %s", decimal.NewFromFloat(summary.ImageGenerationCallPrice).Mul(decimal.NewFromFloat(summary.GroupRatio)).Mul(decimal.NewFromFloat(common.QuotaPerUnit)).String()))
 	}
 
-	if summary.TotalTokens == 0 {
+	if summary.TotalTokens == 0 && summary.Quota == 0 {
 		extraContent = append(extraContent, "上游没有返回计费信息，无法扣费（可能是上游超时）")
 		logger.LogError(ctx, fmt.Sprintf("total tokens is 0, cannot consume quota, userId %d, channelId %d, tokenId %d, model %s， pre-consumed quota %d", relayInfo.UserId, relayInfo.ChannelId, relayInfo.TokenId, summary.ModelName, relayInfo.FinalPreConsumedQuota))
 	} else {
