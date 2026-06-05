@@ -59,6 +59,9 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	//}
 
 	info.Action = action
+	if action == constant.SunoActionMusic {
+		c.Set("task_billing_model", resolveSunoBillingModel(sunoRequest))
+	}
 	c.Set("task_request", sunoRequest)
 	return nil
 }
@@ -158,13 +161,12 @@ func actionValidate(c *gin.Context, sunoRequest *dto.SunoSubmitReq, action strin
 		}
 		hasExplicitMusicModel := sunoRequest.UpstreamModel != "" ||
 			sunoRequest.MusicModel != "" ||
-			sunoRequest.FreebeatModel != "" ||
 			sunoRequest.Engine != "" ||
 			sunoRequest.ModelID != "" ||
 			sunoRequest.ModelIDCamel != "" ||
 			sunoRequest.Mv != ""
 		if !hasExplicitMusicModel {
-			sunoRequest.Mv = "chirp-v3-0"
+			sunoRequest.UpstreamModel = "suno-v5"
 		}
 	case constant.SunoActionLyrics:
 		if sunoRequest.Model == "" {
@@ -178,4 +180,44 @@ func actionValidate(c *gin.Context, sunoRequest *dto.SunoSubmitReq, action strin
 		err = fmt.Errorf("invalid_action")
 	}
 	return
+}
+
+func resolveSunoBillingModel(sunoRequest *dto.SunoSubmitReq) string {
+	if sunoRequest == nil {
+		return "suno-v5"
+	}
+	for _, value := range []string{
+		sunoRequest.UpstreamModel,
+		sunoRequest.MusicModel,
+		sunoRequest.Engine,
+		sunoRequest.ModelID,
+		sunoRequest.ModelIDCamel,
+		sunoRequest.Mv,
+		sunoRequest.Model,
+	} {
+		if modelName := normalizeSunoMusicBillingModel(value); modelName != "" {
+			return modelName
+		}
+	}
+	return "suno-v5"
+}
+
+func normalizeSunoMusicBillingModel(value string) string {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	normalized = strings.ReplaceAll(normalized, "_", "-")
+	if normalized == "" || normalized == "music" || normalized == "suno-music" {
+		return ""
+	}
+	switch normalized {
+	case "suno", "suno-v5", "suno-5", "v5", "chirp-v5", "chirp-v5.0", "chirp-crow", "85":
+		return "suno-v5"
+	case "minimax", "minimax-music", "minimax-music-v2.6", "minimax-music-v2-6", "minimax-music-2.6", "105":
+		return "minimax-music-v2.6"
+	case "sonauto", "sonauto-v3", "82":
+		return "sonauto-v3"
+	case "mureka", "mureka-v9", "mureka-9", "114":
+		return "mureka-v9"
+	default:
+		return ""
+	}
 }

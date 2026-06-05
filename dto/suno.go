@@ -8,15 +8,21 @@ type SunoSubmitReq struct {
 	Model                string  `json:"model,omitempty"`
 	GptDescriptionPrompt string  `json:"gpt_description_prompt,omitempty"`
 	Prompt               string  `json:"prompt,omitempty"`
+	Lyrics               string  `json:"lyrics,omitempty"`
+	Lyric                string  `json:"lyric,omitempty"`
+	CustomLyrics         string  `json:"custom_lyrics,omitempty"`
+	CustomLyricsCamel    string  `json:"customLyrics,omitempty"`
 	Mv                   string  `json:"mv,omitempty"`
 	UpstreamModel        string  `json:"upstream_model,omitempty"`
 	MusicModel           string  `json:"music_model,omitempty"`
-	FreebeatModel        string  `json:"freebeat_model,omitempty"`
 	Engine               string  `json:"engine,omitempty"`
 	ModelID              string  `json:"model_id,omitempty"`
 	ModelIDCamel         string  `json:"modelId,omitempty"`
 	Title                string  `json:"title,omitempty"`
 	Tags                 string  `json:"tags,omitempty"`
+	Style                string  `json:"style,omitempty"`
+	Genre                string  `json:"genre,omitempty"`
+	Genres               string  `json:"genres,omitempty"`
 	ContinueAt           float64 `json:"continue_at,omitempty"`
 	TaskID               string  `json:"task_id,omitempty"`
 	ContinueClipId       string  `json:"continue_clip_id,omitempty"`
