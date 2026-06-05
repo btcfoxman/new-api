@@ -170,7 +170,8 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 	if strings.HasPrefix(info.OriginModelName, "gpt-4o-audio") {
 		service.PostAudioConsumeQuota(c, info, usageDto, "")
 	} else {
-		service.PostTextConsumeQuota(c, info, usageDto, nil)
+		actualQuota := service.PostTextConsumeQuota(c, info, usageDto, nil)
+		service.RecordResponsesTaskSubmission(c, info, request, actualQuota)
 	}
 	return nil
 }
@@ -208,10 +209,18 @@ func ResponsesRetrieveHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAP
 	if httpResp.StatusCode != http.StatusOK {
 		newAPIError = service.RelayErrorHandler(c.Request.Context(), httpResp, false)
 		service.ResetStatusCode(newAPIError, statusCodeMappingStr)
+		if httpResp.StatusCode >= http.StatusBadRequest && httpResp.StatusCode < http.StatusInternalServerError && httpResp.StatusCode != http.StatusTooManyRequests {
+			reason := fmt.Sprintf("upstream query failed with status %d", httpResp.StatusCode)
+			if newAPIError != nil {
+				reason = newAPIError.Error()
+			}
+			service.FailResponsesTaskFromFetch(c, info, c.Param("response_id"), reason)
+		}
 		return newAPIError
 	}
 
 	_, newAPIError = adaptor.DoResponse(c, httpResp, info)
+	service.UpdateResponsesTaskFromFetch(c, info, c.Param("response_id"))
 	if newAPIError != nil {
 		service.ResetStatusCode(newAPIError, statusCodeMappingStr)
 		return newAPIError
