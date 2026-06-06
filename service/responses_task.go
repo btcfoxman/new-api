@@ -1,7 +1,9 @@
 package service
 
 import (
+	"crypto/sha256"
 	"encoding/json"
+	"encoding/hex"
 	"fmt"
 	"strings"
 	"time"
@@ -19,7 +21,21 @@ import (
 const (
 	responsesResponseContextKey     = "openai_responses_response"
 	responsesResponseBodyContextKey = "openai_responses_response_body"
+	maxResponsesTaskIDLength        = 180
 )
+
+func ResponsesTaskID(responseID string) string {
+	responseID = strings.TrimSpace(responseID)
+	if responseID == "" || len(responseID) <= maxResponsesTaskIDLength {
+		return responseID
+	}
+	sum := sha256.Sum256([]byte(responseID))
+	return "resp_task_" + hex.EncodeToString(sum[:])
+}
+
+func IsResponsesBackgroundRequest(request *dto.OpenAIResponsesRequest) bool {
+	return responsesRequestBackground(request)
+}
 
 func CaptureResponsesResponse(c *gin.Context, response *dto.OpenAIResponsesResponse, responseBody []byte) {
 	if c == nil || response == nil {
@@ -246,7 +262,8 @@ func RecordResponsesTaskSubmission(c *gin.Context, info *relaycommon.RelayInfo, 
 	if !ok || response.ID == "" {
 		return
 	}
-	if _, exists, err := model.GetByTaskId(info.UserId, response.ID); err != nil {
+	taskID := ResponsesTaskID(response.ID)
+	if _, exists, err := model.GetByTaskId(info.UserId, taskID); err != nil {
 		logger.LogWarn(c, fmt.Sprintf("load responses task %s failed: %s", response.ID, err.Error()))
 		return
 	} else if exists {
@@ -254,10 +271,11 @@ func RecordResponsesTaskSubmission(c *gin.Context, info *relaycommon.RelayInfo, 
 	}
 
 	task := model.InitTask(constant.TaskPlatformResponses, info)
-	task.TaskID = response.ID
+	task.TaskID = taskID
 	task.Action = constant.TaskActionResponses
 	task.Prompt = responsesPromptFromRequest(request)
 	task.Properties.Input = truncateResponsesTaskText(string(request.Input))
+	task.PrivateData.ResponseID = response.ID
 	task.PrivateData.UpstreamTaskID = responsesMetadataValue(response.Metadata, "task_id")
 	task.PrivateData.BillingSource = info.BillingSource
 	task.PrivateData.SubscriptionId = info.SubscriptionId
@@ -277,10 +295,15 @@ func RecordResponsesTaskSubmission(c *gin.Context, info *relaycommon.RelayInfo, 
 	}
 	if err := task.Insert(); err != nil {
 		logger.LogError(c, fmt.Sprintf("insert responses task %s failed: %s", response.ID, err.Error()))
+		if task.Quota != 0 {
+			RefundTaskQuota(c, task, "insert responses task failed")
+		}
 		return
 	}
 	if task.Status == model.TaskStatusFailure && task.Quota != 0 {
 		RefundTaskQuota(c, task, task.FailReason)
+	} else if task.Status == model.TaskStatusSuccess {
+		settleResponsesTaskOnSuccess(c, task, response)
 	}
 }
 
@@ -312,7 +335,7 @@ func UpdateResponsesTaskFromFetch(c *gin.Context, info *relaycommon.RelayInfo, r
 	if userID == 0 {
 		return
 	}
-	task, exists, err := model.GetByTaskId(userID, responseID)
+	task, exists, err := model.GetByTaskId(userID, ResponsesTaskID(responseID))
 	if err != nil {
 		logger.LogWarn(c, fmt.Sprintf("load responses task %s failed: %s", responseID, err.Error()))
 		return
@@ -362,7 +385,7 @@ func FailResponsesTaskFromFetch(c *gin.Context, info *relaycommon.RelayInfo, res
 	if userID == 0 {
 		return
 	}
-	task, exists, err := model.GetByTaskId(userID, responseID)
+	task, exists, err := model.GetByTaskId(userID, ResponsesTaskID(responseID))
 	if err != nil {
 		logger.LogWarn(c, fmt.Sprintf("load responses task %s failed: %s", responseID, err.Error()))
 		return
