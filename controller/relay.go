@@ -121,6 +121,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		newAPIError = types.NewError(err, types.ErrorCodeGenRelayInfoFailed)
 		return
 	}
+	if responsesReq, ok := request.(*dto.OpenAIResponsesRequest); ok && service.IsResponsesAsyncTaskRequest(responsesReq) {
+		relayInfo.ForcePreConsume = true
+	}
 
 	needSensitiveCheck := setting.ShouldCheckPromptSensitive()
 	needCountToken := constant.CountToken

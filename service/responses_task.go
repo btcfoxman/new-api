@@ -39,6 +39,16 @@ func IsResponsesBackgroundRequest(request *dto.OpenAIResponsesRequest) bool {
 	return responsesRequestBackground(request)
 }
 
+func IsResponsesAsyncTaskRequest(request *dto.OpenAIResponsesRequest) bool {
+	if request == nil {
+		return false
+	}
+	if responsesRequestBackgroundExplicitFalse(request) {
+		return false
+	}
+	return responsesRequestBackground(request) || responsesRequestHasImageGeneration(request)
+}
+
 func IsResponsesImageGenerationRequest(request *dto.OpenAIResponsesRequest) bool {
 	return responsesRequestHasImageGeneration(request)
 }
@@ -89,6 +99,21 @@ func responsesRequestBackground(request *dto.OpenAIResponsesRequest) bool {
 	var backgroundString string
 	if err := json.Unmarshal(request.Background, &backgroundString); err == nil {
 		return strings.EqualFold(strings.TrimSpace(backgroundString), "true")
+	}
+	return false
+}
+
+func responsesRequestBackgroundExplicitFalse(request *dto.OpenAIResponsesRequest) bool {
+	if request == nil || len(request.Background) == 0 {
+		return false
+	}
+	var background bool
+	if err := json.Unmarshal(request.Background, &background); err == nil {
+		return !background
+	}
+	var backgroundString string
+	if err := json.Unmarshal(request.Background, &backgroundString); err == nil {
+		return strings.EqualFold(strings.TrimSpace(backgroundString), "false")
 	}
 	return false
 }
@@ -295,7 +320,7 @@ func RecordResponsesTaskSubmission(c *gin.Context, info *relaycommon.RelayInfo, 
 	if c == nil || info == nil || request == nil {
 		return
 	}
-	if !responsesRequestBackground(request) && !responsesRequestHasImageGeneration(request) && !c.GetBool("image_generation_call") {
+	if !IsResponsesAsyncTaskRequest(request) && !c.GetBool("responses_async_task") {
 		return
 	}
 	response, responseBody, ok := capturedResponsesResponse(c)
