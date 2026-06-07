@@ -39,6 +39,10 @@ func IsResponsesBackgroundRequest(request *dto.OpenAIResponsesRequest) bool {
 	return responsesRequestBackground(request)
 }
 
+func IsResponsesImageGenerationRequest(request *dto.OpenAIResponsesRequest) bool {
+	return responsesRequestHasImageGeneration(request)
+}
+
 func CaptureResponsesResponse(c *gin.Context, response *dto.OpenAIResponsesResponse, responseBody []byte) {
 	if c == nil || response == nil {
 		return
@@ -85,6 +89,33 @@ func responsesRequestBackground(request *dto.OpenAIResponsesRequest) bool {
 	var backgroundString string
 	if err := json.Unmarshal(request.Background, &backgroundString); err == nil {
 		return strings.EqualFold(strings.TrimSpace(backgroundString), "true")
+	}
+	return false
+}
+
+func responsesRequestHasImageGeneration(request *dto.OpenAIResponsesRequest) bool {
+	if request == nil {
+		return false
+	}
+	for _, tool := range request.GetToolsMap() {
+		if strings.EqualFold(strings.TrimSpace(common.Interface2String(tool["type"])), dto.ResponsesOutputTypeImageGenerationCall) ||
+			strings.EqualFold(strings.TrimSpace(common.Interface2String(tool["type"])), "image_generation") {
+			return true
+		}
+	}
+	if len(request.ToolChoice) > 0 {
+		var toolChoice map[string]any
+		if err := json.Unmarshal(request.ToolChoice, &toolChoice); err == nil {
+			if strings.EqualFold(strings.TrimSpace(common.Interface2String(toolChoice["type"])), dto.ResponsesOutputTypeImageGenerationCall) ||
+				strings.EqualFold(strings.TrimSpace(common.Interface2String(toolChoice["type"])), "image_generation") {
+				return true
+			}
+		}
+		var toolChoiceString string
+		if err := json.Unmarshal(request.ToolChoice, &toolChoiceString); err == nil {
+			return strings.EqualFold(strings.TrimSpace(toolChoiceString), dto.ResponsesOutputTypeImageGenerationCall) ||
+				strings.EqualFold(strings.TrimSpace(toolChoiceString), "image_generation")
+		}
 	}
 	return false
 }
@@ -261,7 +292,10 @@ func applyResponsesTaskState(task *model.Task, response *dto.OpenAIResponsesResp
 }
 
 func RecordResponsesTaskSubmission(c *gin.Context, info *relaycommon.RelayInfo, request *dto.OpenAIResponsesRequest, actualQuota int) {
-	if c == nil || info == nil || request == nil || !responsesRequestBackground(request) {
+	if c == nil || info == nil || request == nil {
+		return
+	}
+	if !responsesRequestBackground(request) && !responsesRequestHasImageGeneration(request) && !c.GetBool("image_generation_call") {
 		return
 	}
 	response, responseBody, ok := capturedResponsesResponse(c)

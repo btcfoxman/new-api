@@ -169,7 +169,7 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 
 	if strings.HasPrefix(info.OriginModelName, "gpt-4o-audio") {
 		service.PostAudioConsumeQuota(c, info, usageDto, "")
-	} else if service.IsResponsesBackgroundRequest(request) {
+	} else if service.IsResponsesBackgroundRequest(request) || service.IsResponsesImageGenerationRequest(request) || c.GetBool("image_generation_call") {
 		actualQuota := info.PriceData.QuotaToPreConsume
 		info.PriceData.Quota = actualQuota
 		if err := service.SettleBilling(c, info, actualQuota); err != nil {
