@@ -46,6 +46,7 @@ type Task struct {
 	CreatedAt  int64                 `json:"created_at" gorm:"index"`
 	UpdatedAt  int64                 `json:"updated_at"`
 	TaskID     string                `json:"task_id" gorm:"type:varchar(191);index"` // 第三方id，不一定有/ song id\ Task id
+	ResponseID string                `json:"response_id,omitempty" gorm:"-"`
 	Platform   constant.TaskPlatform `json:"platform" gorm:"type:varchar(30);index"` // 平台
 	UserId     int                   `json:"user_id" gorm:"index"`
 	Group      string                `json:"group" gorm:"type:varchar(50)"` // 修正计费用
@@ -107,6 +108,9 @@ type TaskPrivateData struct {
 	SubscriptionId int                 `json:"subscription_id,omitempty"` // 订阅 ID，用于订阅退款
 	TokenId        int                 `json:"token_id,omitempty"`        // 令牌 ID，用于令牌额度退款
 	BillingContext *TaskBillingContext `json:"billing_context,omitempty"` // 计费参数快照（用于轮询阶段重新计算）
+	Refunded       bool                `json:"refunded,omitempty"`
+	RefundedAt     int64               `json:"refunded_at,omitempty"`
+	RefundReason   string              `json:"refund_reason,omitempty"`
 }
 
 // TaskBillingContext 记录任务提交时的计费参数，以便轮询阶段可以重新计算额度。
@@ -242,6 +246,7 @@ func TaskGetAllUserTask(userId int, startIdx int, num int, queryParams SyncTaskQ
 	if err != nil {
 		return nil
 	}
+	fillTaskPublicFields(tasks)
 
 	return tasks
 }
@@ -287,6 +292,7 @@ func TaskGetAllTasks(startIdx int, num int, queryParams SyncTaskQueryParams) []*
 	if err != nil {
 		return nil
 	}
+	fillTaskPublicFields(tasks)
 
 	return tasks
 }
@@ -327,6 +333,9 @@ func GetByOnlyTaskId(taskId string) (*Task, bool, error) {
 	if err != nil {
 		return nil, false, err
 	}
+	if task != nil {
+		task.fillPublicFields()
+	}
 	return task, exist, err
 }
 
@@ -342,6 +351,9 @@ func GetByTaskId(userId int, taskId string) (*Task, bool, error) {
 	if err != nil {
 		return nil, false, err
 	}
+	if task != nil {
+		task.fillPublicFields()
+	}
 	return task, exist, err
 }
 
@@ -356,7 +368,21 @@ func GetByTaskIds(userId int, taskIds []any) ([]*Task, error) {
 	if err != nil {
 		return nil, err
 	}
+	fillTaskPublicFields(task)
 	return task, nil
+}
+
+func (t *Task) fillPublicFields() {
+	if t == nil {
+		return
+	}
+	t.ResponseID = t.PrivateData.ResponseID
+}
+
+func fillTaskPublicFields(tasks []*Task) {
+	for _, task := range tasks {
+		task.fillPublicFields()
+	}
 }
 
 func (Task *Task) Insert() error {

@@ -300,13 +300,36 @@ func RelayResponsesFetch(c *gin.Context) {
 		return
 	}
 	if !found {
-		newAPIError = types.NewErrorWithStatusCode(
-			fmt.Errorf("response route info not found for %s; create the response again or query before the route cache expires", responseID),
-			types.ErrorCodeInvalidRequest,
-			http.StatusNotFound,
-			types.ErrOptionWithSkipRetry(),
-		)
-		return
+		if task, exists, taskErr := model.GetByTaskId(c.GetInt("id"), service.ResponsesTaskID(responseID)); taskErr != nil {
+			newAPIError = types.NewErrorWithStatusCode(
+				fmt.Errorf("failed to load response task route info: %w", taskErr),
+				types.ErrorCodeInvalidRequest,
+				http.StatusInternalServerError,
+				types.ErrOptionWithSkipRetry(),
+			)
+			return
+		} else if exists && task != nil && task.ChannelId > 0 {
+			modelName := task.Properties.OriginModelName
+			if modelName == "" && task.PrivateData.BillingContext != nil {
+				modelName = task.PrivateData.BillingContext.OriginModelName
+			}
+			routeInfo = service.ResponsesRouteInfo{
+				ChannelId: task.ChannelId,
+				Model:     modelName,
+				Group:     task.Group,
+				CreatedAt: task.CreatedAt,
+			}
+			found = true
+		}
+		if !found {
+			newAPIError = types.NewErrorWithStatusCode(
+				fmt.Errorf("response route info not found for %s; create the response again or query before the route cache expires", responseID),
+				types.ErrorCodeInvalidRequest,
+				http.StatusNotFound,
+				types.ErrOptionWithSkipRetry(),
+			)
+			return
+		}
 	}
 
 	channel, err := model.GetChannelById(routeInfo.ChannelId, true)

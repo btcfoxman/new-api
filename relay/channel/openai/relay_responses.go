@@ -34,7 +34,7 @@ func OaiResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 	}
 	service.CaptureResponsesResponse(c, &responsesResponse, responseBody)
-	if oaiError := responsesResponse.GetOpenAIError(); oaiError != nil && oaiError.Type != "" {
+	if oaiError := responsesResponse.GetOpenAIError(); oaiError != nil && oaiError.Type != "" && responsesResponse.ID == "" {
 		return nil, types.WithOpenAIError(*oaiError, resp.StatusCode)
 	}
 

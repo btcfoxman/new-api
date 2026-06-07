@@ -2,8 +2,8 @@ package service
 
 import (
 	"crypto/sha256"
-	"encoding/json"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -21,6 +21,8 @@ import (
 const (
 	responsesResponseContextKey     = "openai_responses_response"
 	responsesResponseBodyContextKey = "openai_responses_response_body"
+	responsesResponseIDContextKey   = "openai_responses_response_id"
+	responsesTaskIDContextKey       = "openai_responses_task_id"
 	maxResponsesTaskIDLength        = 180
 )
 
@@ -42,6 +44,10 @@ func CaptureResponsesResponse(c *gin.Context, response *dto.OpenAIResponsesRespo
 		return
 	}
 	c.Set(responsesResponseContextKey, response)
+	if response.ID != "" {
+		c.Set(responsesResponseIDContextKey, response.ID)
+		c.Set(responsesTaskIDContextKey, ResponsesTaskID(response.ID))
+	}
 	if len(responseBody) > 0 {
 		c.Set(responsesResponseBodyContextKey, append([]byte(nil), responseBody...))
 	}
@@ -300,7 +306,7 @@ func RecordResponsesTaskSubmission(c *gin.Context, info *relaycommon.RelayInfo, 
 		}
 		return
 	}
-	if task.Status == model.TaskStatusFailure && task.Quota != 0 {
+	if task.Status == model.TaskStatusFailure && task.Quota != 0 && !task.PrivateData.Refunded {
 		RefundTaskQuota(c, task, task.FailReason)
 	} else if task.Status == model.TaskStatusSuccess {
 		settleResponsesTaskOnSuccess(c, task, response)
@@ -349,7 +355,7 @@ func UpdateResponsesTaskFromFetch(c *gin.Context, info *relaycommon.RelayInfo, r
 		return
 	}
 	isTerminal := status == model.TaskStatusSuccess || status == model.TaskStatusFailure
-	shouldRefund := isTerminal && status == model.TaskStatusFailure && task.Quota != 0 && snap.Status != status
+	shouldRefund := isTerminal && status == model.TaskStatusFailure && task.Quota != 0 && snap.Status != status && !task.PrivateData.Refunded
 	shouldSettle := isTerminal && status == model.TaskStatusSuccess && snap.Status != status
 	if isTerminal && snap.Status != status {
 		won, err := task.UpdateWithStatus(snap.Status)
@@ -419,7 +425,7 @@ func FailResponsesTaskFromFetch(c *gin.Context, info *relaycommon.RelayInfo, res
 		logger.LogWarn(c, fmt.Sprintf("responses task %s already transitioned, skip billing", responseID))
 		return
 	}
-	if task.Quota != 0 {
+	if task.Quota != 0 && !task.PrivateData.Refunded {
 		RefundTaskQuota(c, task, task.FailReason)
 	}
 }

@@ -38,6 +38,12 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo) {
 	other := make(map[string]interface{})
 	other["is_task"] = true
 	other["request_path"] = c.Request.URL.Path
+	if responseID := c.GetString(responsesResponseIDContextKey); responseID != "" {
+		other["response_id"] = responseID
+	}
+	if taskID := c.GetString(responsesTaskIDContextKey); taskID != "" {
+		other["task_id"] = taskID
+	}
 	other["model_price"] = info.PriceData.ModelPrice
 	if info.PriceData.ModelRatio > 0 {
 		other["model_ratio"] = info.PriceData.ModelRatio
@@ -153,6 +159,9 @@ func taskModelName(task *model.Task) string {
 // RefundTaskQuota 统一的任务失败退款逻辑。
 // 当异步任务失败时，将预扣的 quota 退还给用户（支持钱包和订阅），并退还令牌额度。
 func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) {
+	if task.PrivateData.Refunded {
+		return
+	}
 	quota := task.Quota
 	if quota == 0 {
 		return
@@ -174,7 +183,7 @@ func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) {
 	model.RecordTaskBillingLog(model.RecordTaskBillingLogParams{
 		UserId:    task.UserId,
 		LogType:   model.LogTypeRefund,
-		Content:   "",
+		Content:   fmt.Sprintf("task failed refund: %s", reason),
 		ChannelId: task.ChannelId,
 		ModelName: taskModelName(task),
 		Quota:     quota,
@@ -182,6 +191,15 @@ func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) {
 		Group:     task.Group,
 		Other:     other,
 	})
+	task.PrivateData.Refunded = true
+	task.PrivateData.RefundedAt = common.GetTimestamp()
+	task.PrivateData.RefundReason = reason
+	if task.ID > 0 {
+		task.UpdatedAt = common.GetTimestamp()
+		if err := task.Update(); err != nil {
+			logger.LogWarn(ctx, fmt.Sprintf("mark task %s refunded failed: %s", task.TaskID, err.Error()))
+		}
+	}
 }
 
 // RecalculateTaskQuota 通用的异步差额结算。
