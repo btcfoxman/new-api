@@ -45,8 +45,12 @@ func OaiResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 	}
 
 	// 写入新的 response body
-	if responsesResponse.ID != "" {
-		service.RecordResponsesRouteInfo(responsesResponse.ID, info)
+	routeResponseID := responsesResponse.ID
+	if requestedResponseID := strings.TrimSpace(c.Param("response_id")); requestedResponseID != "" {
+		routeResponseID = requestedResponseID
+	}
+	if routeResponseID != "" {
+		service.RecordResponsesRouteInfo(routeResponseID, info)
 	}
 	service.IOCopyBytesGracefully(c, resp, responseBody)
 

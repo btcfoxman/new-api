@@ -176,6 +176,14 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 		if err := service.SettleBilling(c, info, actualQuota); err != nil {
 			common.SysError("settle responses task billing error: " + err.Error())
 		}
+		common.SysLog(fmt.Sprintf(
+			"record responses async task consumption: model=%s user_id=%d channel_id=%d quota=%d response_path=%s",
+			info.OriginModelName,
+			info.UserId,
+			info.ChannelId,
+			actualQuota,
+			c.Request.URL.Path,
+		))
 		service.LogTaskConsumption(c, info)
 		service.RecordResponsesTaskSubmission(c, info, request, actualQuota)
 	} else {

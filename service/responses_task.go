@@ -58,9 +58,13 @@ func CaptureResponsesResponse(c *gin.Context, response *dto.OpenAIResponsesRespo
 		return
 	}
 	c.Set(responsesResponseContextKey, response)
-	if response.ID != "" {
-		c.Set(responsesResponseIDContextKey, response.ID)
-		c.Set(responsesTaskIDContextKey, ResponsesTaskID(response.ID))
+	responseID := response.ID
+	if requestResponseID := strings.TrimSpace(c.Param("response_id")); requestResponseID != "" {
+		responseID = requestResponseID
+	}
+	if responseID != "" {
+		c.Set(responsesResponseIDContextKey, responseID)
+		c.Set(responsesTaskIDContextKey, ResponsesTaskID(responseID))
 	}
 	if len(responseBody) > 0 {
 		c.Set(responsesResponseBodyContextKey, append([]byte(nil), responseBody...))
@@ -321,10 +325,27 @@ func RecordResponsesTaskSubmission(c *gin.Context, info *relaycommon.RelayInfo, 
 		return
 	}
 	if !IsResponsesAsyncTaskRequest(request) && !c.GetBool("responses_async_task") {
+		logger.LogWarn(c, fmt.Sprintf(
+			"skip responses task submission: not async task, model=%s background=%s tools=%s",
+			info.OriginModelName,
+			string(request.Background),
+			string(request.Tools),
+		))
 		return
 	}
 	response, responseBody, ok := capturedResponsesResponse(c)
 	if !ok || response.ID == "" {
+		logger.LogError(c, fmt.Sprintf(
+			"skip responses task submission: response capture missing or empty id, model=%s captured=%t response_id=%q",
+			info.OriginModelName,
+			ok,
+			func() string {
+				if response == nil {
+					return ""
+				}
+				return response.ID
+			}(),
+		))
 		return
 	}
 	taskID := ResponsesTaskID(response.ID)
@@ -332,6 +353,7 @@ func RecordResponsesTaskSubmission(c *gin.Context, info *relaycommon.RelayInfo, 
 		logger.LogWarn(c, fmt.Sprintf("load responses task %s failed: %s", response.ID, err.Error()))
 		return
 	} else if exists {
+		logger.LogInfo(c, fmt.Sprintf("responses task %s already exists for response %s", taskID, response.ID))
 		return
 	}
 
@@ -365,6 +387,15 @@ func RecordResponsesTaskSubmission(c *gin.Context, info *relaycommon.RelayInfo, 
 		}
 		return
 	}
+	logger.LogInfo(c, fmt.Sprintf(
+		"inserted responses task: task_id=%s response_id=%s user_id=%d channel_id=%d quota=%d status=%s",
+		task.TaskID,
+		response.ID,
+		task.UserId,
+		task.ChannelId,
+		task.Quota,
+		task.Status,
+	))
 	if task.Status == model.TaskStatusFailure && task.Quota != 0 && !task.PrivateData.Refunded {
 		RefundTaskQuota(c, task, task.FailReason)
 	} else if task.Status == model.TaskStatusSuccess {
@@ -405,7 +436,15 @@ func UpdateResponsesTaskFromFetch(c *gin.Context, info *relaycommon.RelayInfo, r
 		logger.LogWarn(c, fmt.Sprintf("load responses task %s failed: %s", responseID, err.Error()))
 		return
 	}
+	if (!exists || task == nil) && response != nil && response.ID != "" && response.ID != responseID {
+		task, exists, err = model.GetByTaskId(userID, ResponsesTaskID(response.ID))
+		if err != nil {
+			logger.LogWarn(c, fmt.Sprintf("load responses task %s failed: %s", response.ID, err.Error()))
+			return
+		}
+	}
 	if !exists || task == nil {
+		logger.LogWarn(c, fmt.Sprintf("responses task not found for response_id=%s body_response_id=%s", responseID, response.ID))
 		return
 	}
 	snap := task.Snapshot()
