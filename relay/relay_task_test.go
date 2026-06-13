@@ -235,3 +235,30 @@ func TestBuildDoubaoOfficialTaskResponseFailureIncludesOfficialErrorFields(t *te
 	require.True(t, ok)
 	require.Len(t, tools, 1)
 }
+
+func TestBuildDoubaoPureOfficialTaskResponseOmitsLegacyFields(t *testing.T) {
+	task := &model.Task{
+		TaskID:    "task_123",
+		CreatedAt: 1780467459,
+		UpdatedAt: 1780467794,
+		Status:    model.TaskStatusSuccess,
+		PrivateData: model.TaskPrivateData{
+			ResultURL: "https://example.com/video.mp4",
+		},
+		Properties: model.Properties{
+			OriginModelName: "doubao-seedance-2-0-260128",
+		},
+	}
+
+	respBody := buildDoubaoOfficialTaskResponseWithMode(task, true)
+
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(respBody, &payload))
+
+	require.Equal(t, "task_123", payload["id"])
+	require.Equal(t, "doubao-seedance-2-0-260128", payload["model"])
+	require.Equal(t, "succeeded", payload["status"])
+	require.NotContains(t, payload, "code")
+	require.NotContains(t, payload, "message")
+	require.NotContains(t, payload, "data")
+}

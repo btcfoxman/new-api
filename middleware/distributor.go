@@ -273,16 +273,16 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 	} else if strings.HasPrefix(c.Request.URL.Path, "/v1/responses/") && c.Request.Method == http.MethodGet {
 		c.Set("relay_mode", relayconstant.RelayModeResponses)
 		shouldSelectChannel = false
-	} else if strings.HasPrefix(c.Request.URL.Path, "/api/v3/contents/generations/tasks") {
+	} else if isDoubaoOfficialTaskPath(c.Request.URL.Path) {
 		relayMode := relayconstant.RelayModeUnknown
-		if c.Request.Method == http.MethodPost && c.Request.URL.Path == "/api/v3/contents/generations/tasks" {
+		if c.Request.Method == http.MethodPost && isDoubaoOfficialTaskSubmitPath(c.Request.URL.Path) {
 			req, err := getModelFromRequest(c)
 			if err != nil {
 				return nil, false, err
 			}
 			modelRequest.Model = req.Model
 			relayMode = relayconstant.RelayModeVideoSubmit
-		} else if c.Request.Method == http.MethodGet && strings.HasPrefix(c.Request.URL.Path, "/api/v3/contents/generations/tasks/") {
+		} else if c.Request.Method == http.MethodGet && isDoubaoOfficialTaskFetchPath(c.Request.URL.Path) {
 			// Doubao task query by task_id should not require model in request body/query.
 			c.Set("relay_mode", relayconstant.RelayModeVideoFetchByID)
 			shouldSelectChannel = false
@@ -469,6 +469,21 @@ func SetupContextForSelectedChannel(c *gin.Context, channel *model.Channel, mode
 // extractModelNameFromGeminiPath 从 Gemini API URL 路径中提取模型名
 // 输入格式: /v1beta/models/gemini-2.0-flash:generateContent
 // 输出: gemini-2.0-flash
+func isDoubaoOfficialTaskPath(path string) bool {
+	return strings.HasPrefix(path, "/api/v3/contents/generations/tasks") ||
+		strings.HasPrefix(path, "/oapi/v3/contents/generations/tasks")
+}
+
+func isDoubaoOfficialTaskSubmitPath(path string) bool {
+	return path == "/api/v3/contents/generations/tasks" ||
+		path == "/oapi/v3/contents/generations/tasks"
+}
+
+func isDoubaoOfficialTaskFetchPath(path string) bool {
+	return strings.HasPrefix(path, "/api/v3/contents/generations/tasks/") ||
+		strings.HasPrefix(path, "/oapi/v3/contents/generations/tasks/")
+}
+
 func extractModelNameFromGeminiPath(path string) string {
 	// 查找 "/models/" 的位置
 	modelsPrefix := "/models/"

@@ -184,7 +184,6 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 			actualQuota,
 			c.Request.URL.Path,
 		))
-		service.LogTaskConsumption(c, info)
 		service.RecordResponsesTaskSubmission(c, info, request, actualQuota)
 	} else {
 		actualQuota := service.PostTextConsumeQuota(c, info, usageDto, nil)

@@ -60,6 +60,17 @@ func SetVideoRouter(router *gin.Engine) {
 		// doubaoOfficialGroup.GET("/contents/generations/tasks", controller.BatchQueryTasks)
 	}
 
+	// Doubao pure official API routes.
+	// Keep /api/v3 as backward-compatible response with code/message/data.
+	// Use /oapi/v3 when callers need the official payload only.
+	doubaoPureOfficialGroup := router.Group("/oapi/v3")
+	doubaoPureOfficialGroup.Use(middleware.RouteTag("relay"))
+	doubaoPureOfficialGroup.Use(middleware.TokenAuth(), middleware.Distribute())
+	{
+		doubaoPureOfficialGroup.POST("/contents/generations/tasks", controller.RelayTask)
+		doubaoPureOfficialGroup.GET("/contents/generations/tasks/:task_id", controller.RelayTaskFetch)
+	}
+
 	// Ali DashScope official video API routes
 	aliOfficialGroup := router.Group("/api/v1")
 	aliOfficialGroup.Use(middleware.RouteTag("relay"))

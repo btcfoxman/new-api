@@ -396,10 +396,55 @@ func RecordResponsesTaskSubmission(c *gin.Context, info *relaycommon.RelayInfo, 
 		task.Quota,
 		task.Status,
 	))
+	logResponsesTaskConsumption(c, task, info)
 	if task.Status == model.TaskStatusFailure && task.Quota != 0 && !task.PrivateData.Refunded {
 		RefundTaskQuota(c, task, task.FailReason)
 	} else if task.Status == model.TaskStatusSuccess {
 		settleResponsesTaskOnSuccess(c, task, response)
+	}
+}
+
+func logResponsesTaskConsumption(c *gin.Context, task *model.Task, info *relaycommon.RelayInfo) {
+	if c == nil || task == nil || info == nil {
+		return
+	}
+	other := taskBillingOther(task)
+	other["is_task"] = true
+	other["task_id"] = task.TaskID
+	other["request_path"] = c.Request.URL.Path
+	other["responses_async_task"] = true
+	if info.PriceData.GroupRatioInfo.HasSpecialRatio {
+		other["user_group_ratio"] = info.PriceData.GroupRatioInfo.GroupSpecialRatio
+	}
+
+	logContent := fmt.Sprintf("操作 %s", task.Action)
+	if common.StringsContains(constant.TaskPricePatches, info.OriginModelName) || info.PriceData.UsePrice {
+		logContent = fmt.Sprintf("%s，按次计费", logContent)
+	} else if len(info.PriceData.OtherRatios) > 0 {
+		var contents []string
+		for key, ratio := range info.PriceData.OtherRatios {
+			if ratio != 1.0 {
+				contents = append(contents, fmt.Sprintf("%s: %.2f", key, ratio))
+			}
+		}
+		if len(contents) > 0 {
+			logContent = fmt.Sprintf("%s, 计算参数：%s", logContent, strings.Join(contents, ", "))
+		}
+	}
+
+	model.RecordConsumeLog(c, task.UserId, model.RecordConsumeLogParams{
+		ChannelId: task.ChannelId,
+		ModelName: taskModelName(task),
+		TokenName: c.GetString("token_name"),
+		Quota:     task.Quota,
+		Content:   logContent,
+		TokenId:   info.TokenId,
+		Group:     task.Group,
+		Other:     other,
+	})
+	if task.Quota != 0 {
+		model.UpdateUserUsedQuotaAndRequestCount(task.UserId, task.Quota)
+		model.UpdateChannelUsedQuota(task.ChannelId, task.Quota)
 	}
 }
 

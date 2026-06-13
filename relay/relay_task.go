@@ -396,6 +396,7 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 	isAliOfficialTaskAPI := strings.HasPrefix(c.Request.URL.Path, "/api/v1/tasks/")
 	isViduOfficialTaskAPI := strings.HasPrefix(c.Request.URL.Path, "/ent/v2/tasks/")
 	isDoubaoOfficialTaskAPI := strings.HasPrefix(c.Request.URL.Path, "/api/v3/contents/generations/tasks/")
+	isDoubaoPureOfficialTaskAPI := strings.HasPrefix(c.Request.URL.Path, "/oapi/v3/contents/generations/tasks/")
 
 	// Gemini/Vertex 支持实时查询：用户 fetch 时直接从上游拉取最新状态
 	if realtimeResp := tryRealtimeFetch(originTask, isOpenAIVideoAPI); len(realtimeResp) > 0 {
@@ -413,8 +414,8 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 		return
 	}
 
-	if isDoubaoOfficialTaskAPI {
-		respBody = buildDoubaoOfficialTaskResponse(originTask)
+	if isDoubaoOfficialTaskAPI || isDoubaoPureOfficialTaskAPI {
+		respBody = buildDoubaoOfficialTaskResponseWithMode(originTask, isDoubaoPureOfficialTaskAPI)
 		return
 	}
 
@@ -483,6 +484,10 @@ func buildViduOfficialTaskResponse(originTask *model.Task) []byte {
 }
 
 func buildDoubaoOfficialTaskResponse(originTask *model.Task) []byte {
+	return buildDoubaoOfficialTaskResponseWithMode(originTask, false)
+}
+
+func buildDoubaoOfficialTaskResponseWithMode(originTask *model.Task, pure bool) []byte {
 	asString := func(v any) string {
 		if v == nil {
 			return ""
@@ -864,17 +869,20 @@ func buildDoubaoOfficialTaskResponse(originTask *model.Task) []byte {
 	respPayload["priority"] = priority
 	respPayload["tools"] = tools
 	respPayload["error"] = errorObj
-	respPayload["code"] = dto.TaskSuccessCode
-	respPayload["message"] = ""
-	respPayload["data"] = TaskModel2Dto(originTask)
+	if pure {
+		delete(respPayload, "code")
+		delete(respPayload, "message")
+		delete(respPayload, "data")
+	} else {
+		respPayload["code"] = dto.TaskSuccessCode
+		respPayload["message"] = ""
+		respPayload["data"] = TaskModel2Dto(originTask)
+	}
 
 	if out, err := common.Marshal(respPayload); err == nil {
 		return out
 	}
 	fallbackPayload := map[string]any{
-		"code":                    dto.TaskSuccessCode,
-		"message":                 "",
-		"data":                    TaskModel2Dto(originTask),
 		"id":                      originTask.TaskID,
 		"model":                   modelName,
 		"status":                  officialStatus,
@@ -894,6 +902,11 @@ func buildDoubaoOfficialTaskResponse(originTask *model.Task) []byte {
 		"priority":                priority,
 		"tools":                   tools,
 		"error":                   errorObj,
+	}
+	if !pure {
+		fallbackPayload["code"] = dto.TaskSuccessCode
+		fallbackPayload["message"] = ""
+		fallbackPayload["data"] = TaskModel2Dto(originTask)
 	}
 	out, _ := common.Marshal(fallbackPayload)
 	return out

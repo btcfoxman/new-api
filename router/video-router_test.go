@@ -23,4 +23,6 @@ func TestSetVideoRouterRegistersOfficialVideoRoutes(t *testing.T) {
 	require.True(t, routes[http.MethodGet+" /api/v1/tasks/:task_id"])
 	require.True(t, routes[http.MethodPost+" /api/v3/contents/generations/tasks"])
 	require.True(t, routes[http.MethodGet+" /api/v3/contents/generations/tasks/:task_id"])
+	require.True(t, routes[http.MethodPost+" /oapi/v3/contents/generations/tasks"])
+	require.True(t, routes[http.MethodGet+" /oapi/v3/contents/generations/tasks/:task_id"])
 }
