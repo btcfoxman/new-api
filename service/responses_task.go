@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -449,6 +450,10 @@ func logResponsesTaskConsumption(c *gin.Context, task *model.Task, info *relayco
 }
 
 func settleResponsesTaskOnSuccess(ctx *gin.Context, task *model.Task, response *dto.OpenAIResponsesResponse) {
+	settleResponsesTaskOnSuccessFromContext(ctx, task, response)
+}
+
+func settleResponsesTaskOnSuccessFromContext(ctx context.Context, task *model.Task, response *dto.OpenAIResponsesResponse) {
 	if task == nil || response == nil {
 		return
 	}

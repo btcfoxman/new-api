@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -108,6 +109,12 @@ func TaskPollingLoop() {
 			nullTaskIds := make([]int64, 0)
 			for _, task := range tasks {
 				upstreamID := task.GetUpstreamTaskID()
+				if task.Platform == constant.TaskPlatformResponses {
+					upstreamID = strings.TrimSpace(task.PrivateData.ResponseID)
+					if upstreamID == "" {
+						upstreamID = task.GetUpstreamTaskID()
+					}
+				}
 				if upstreamID == "" {
 					// 统计失败的未完成任务
 					nullTaskIds = append(nullTaskIds, task.ID)
@@ -144,10 +151,204 @@ func DispatchPlatformUpdate(platform constant.TaskPlatform, taskChannelM map[int
 		// MJ 轮询由其自身处理，这里预留入口
 	case constant.TaskPlatformSuno:
 		_ = UpdateSunoTasks(context.Background(), taskChannelM, taskM)
+	case constant.TaskPlatformResponses:
+		_ = UpdateResponsesTasks(context.Background(), taskChannelM, taskM)
 	default:
 		if err := UpdateVideoTasks(context.Background(), platform, taskChannelM, taskM); err != nil {
 			common.SysLog(fmt.Sprintf("UpdateVideoTasks fail: %s", err))
 		}
+	}
+}
+
+// UpdateResponsesTasks polls OpenAI-compatible /v1/responses/{response_id} tasks.
+func UpdateResponsesTasks(ctx context.Context, taskChannelM map[int][]string, taskM map[string]*model.Task) error {
+	for channelID, responseIDs := range taskChannelM {
+		if err := updateResponsesTasks(ctx, channelID, responseIDs, taskM); err != nil {
+			logger.LogError(ctx, fmt.Sprintf("Channel #%d failed to update responses async tasks: %s", channelID, err.Error()))
+		}
+	}
+	return nil
+}
+
+func updateResponsesTasks(ctx context.Context, channelID int, responseIDs []string, taskM map[string]*model.Task) error {
+	logger.LogInfo(ctx, fmt.Sprintf("Channel #%d pending responses tasks: %d", channelID, len(responseIDs)))
+	if len(responseIDs) == 0 {
+		return nil
+	}
+	ch, err := model.CacheGetChannel(channelID)
+	if err != nil {
+		var failedIDs []int64
+		for _, responseID := range responseIDs {
+			if t, ok := taskM[responseID]; ok {
+				failedIDs = append(failedIDs, t.ID)
+			}
+		}
+		errUpdate := model.TaskBulkUpdateByID(failedIDs, map[string]any{
+			"fail_reason": fmt.Sprintf("Failed to get channel info, channel ID: %d", channelID),
+			"status":      "FAILURE",
+			"progress":    "100%",
+		})
+		if errUpdate != nil {
+			common.SysLog(fmt.Sprintf("UpdateResponsesTask error: %v", errUpdate))
+		}
+		return fmt.Errorf("CacheGetChannel failed: %w", err)
+	}
+	for _, responseID := range responseIDs {
+		task := taskM[responseID]
+		if task == nil {
+			logger.LogError(ctx, fmt.Sprintf("Responses task %s not found in taskM", responseID))
+			continue
+		}
+		if err := updateResponsesSingleTask(ctx, ch, responseID, task); err != nil {
+			logger.LogError(ctx, fmt.Sprintf("Failed to update responses task %s: %s", responseID, err.Error()))
+		}
+		time.Sleep(1 * time.Second)
+	}
+	return nil
+}
+
+func updateResponsesSingleTask(ctx context.Context, ch *model.Channel, responseID string, task *model.Task) error {
+	if ch == nil {
+		return errors.New("channel is nil")
+	}
+	responseID = strings.TrimSpace(responseID)
+	if responseID == "" && task != nil {
+		responseID = strings.TrimSpace(task.PrivateData.ResponseID)
+	}
+	if responseID == "" {
+		return errors.New("response id is empty")
+	}
+	baseURL := ch.GetBaseURL()
+	if baseURL == "" {
+		baseURL = constant.ChannelBaseURLs[ch.Type]
+	}
+	if strings.TrimSpace(baseURL) == "" {
+		return errors.New("channel base url is empty")
+	}
+	key := ch.Key
+	if task != nil && task.PrivateData.Key != "" {
+		key = task.PrivateData.Key
+	}
+
+	client, err := GetHttpClientWithProxy(ch.GetSetting().Proxy)
+	if err != nil {
+		return fmt.Errorf("new proxy http client failed: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, responsesTaskFetchURL(baseURL, responseID), nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Accept", "application/json")
+	if strings.TrimSpace(key) != "" {
+		req.Header.Set("Authorization", "Bearer "+key)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("fetch responses task failed for %s: %w", responseID, err)
+	}
+	defer resp.Body.Close()
+	responseBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("readAll failed for responses task %s: %w", responseID, err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		if resp.StatusCode >= http.StatusBadRequest && resp.StatusCode < http.StatusInternalServerError && resp.StatusCode != http.StatusTooManyRequests {
+			failResponsesTaskFromPolling(ctx, task, fmt.Sprintf("upstream query failed with status %d", resp.StatusCode))
+		}
+		return fmt.Errorf("Get Responses Task status code: %d, body: %s", resp.StatusCode, string(responseBody))
+	}
+
+	var response dto.OpenAIResponsesResponse
+	if err := common.Unmarshal(responseBody, &response); err != nil {
+		return fmt.Errorf("parse responses task failed for %s: %w, body: %s", responseID, err, string(responseBody))
+	}
+	if response.ID == "" {
+		response.ID = responseID
+	}
+	updateResponsesTaskFromPolling(ctx, task, &response, responseBody)
+	return nil
+}
+
+func responsesTaskFetchURL(baseURL string, responseID string) string {
+	root := strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	escapedID := url.PathEscape(responseID)
+	if strings.HasSuffix(root, "/v1/responses") {
+		return root + "/" + escapedID
+	}
+	if strings.HasSuffix(root, "/v1") {
+		return root + "/responses/" + escapedID
+	}
+	return root + "/v1/responses/" + escapedID
+}
+
+func updateResponsesTaskFromPolling(ctx context.Context, task *model.Task, response *dto.OpenAIResponsesResponse, responseBody []byte) {
+	if task == nil || response == nil {
+		return
+	}
+	snap := task.Snapshot()
+	status := applyResponsesTaskState(task, response, responseBody)
+	if status == "" {
+		return
+	}
+	isTerminal := status == model.TaskStatusSuccess || status == model.TaskStatusFailure
+	shouldRefund := isTerminal && status == model.TaskStatusFailure && task.Quota != 0 && snap.Status != status && !task.PrivateData.Refunded
+	shouldSettle := isTerminal && status == model.TaskStatusSuccess && snap.Status != status
+	if isTerminal && snap.Status != status {
+		won, err := task.UpdateWithStatus(snap.Status)
+		if err != nil {
+			logger.LogError(ctx, fmt.Sprintf("update responses task %s failed: %s", task.TaskID, err.Error()))
+			return
+		}
+		if !won {
+			logger.LogWarn(ctx, fmt.Sprintf("responses task %s already transitioned, skip billing", task.TaskID))
+			return
+		}
+	} else if !snap.Equal(task.Snapshot()) {
+		if _, err := task.UpdateWithStatus(snap.Status); err != nil {
+			logger.LogError(ctx, fmt.Sprintf("update responses task %s failed: %s", task.TaskID, err.Error()))
+		}
+	}
+	if shouldRefund {
+		RefundTaskQuota(ctx, task, task.FailReason)
+	}
+	if shouldSettle {
+		settleResponsesTaskOnSuccessFromContext(ctx, task, response)
+	}
+}
+
+func failResponsesTaskFromPolling(ctx context.Context, task *model.Task, reason string) {
+	if task == nil {
+		return
+	}
+	if task.Status == model.TaskStatusSuccess || task.Status == model.TaskStatusFailure {
+		return
+	}
+	snap := task.Snapshot()
+	now := time.Now().Unix()
+	task.Status = model.TaskStatusFailure
+	task.Progress = "100%"
+	if task.StartTime == 0 {
+		task.StartTime = task.SubmitTime
+	}
+	if task.FinishTime == 0 {
+		task.FinishTime = now
+	}
+	task.FailReason = strings.TrimSpace(reason)
+	if task.FailReason == "" {
+		task.FailReason = "response task query failed"
+	}
+	won, err := task.UpdateWithStatus(snap.Status)
+	if err != nil {
+		logger.LogError(ctx, fmt.Sprintf("update responses task %s failed: %s", task.TaskID, err.Error()))
+		return
+	}
+	if !won {
+		logger.LogWarn(ctx, fmt.Sprintf("responses task %s already transitioned, skip billing", task.TaskID))
+		return
+	}
+	if task.Quota != 0 && !task.PrivateData.Refunded {
+		RefundTaskQuota(ctx, task, task.FailReason)
 	}
 }
 
