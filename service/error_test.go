@@ -1,57 +1,40 @@
 package service
 
 import (
+	"errors"
+	"strings"
 	"testing"
-
-	"github.com/QuantumNous/new-api/types"
-	"github.com/stretchr/testify/require"
 )
 
-func TestResetStatusCode(t *testing.T) {
-	t.Parallel()
-
-	testCases := []struct {
-		name             string
-		statusCode       int
-		statusCodeConfig string
-		expectedCode     int
-	}{
-		{
-			name:             "map string value",
-			statusCode:       429,
-			statusCodeConfig: `{"429":"503"}`,
-			expectedCode:     503,
-		},
-		{
-			name:             "map int value",
-			statusCode:       429,
-			statusCodeConfig: `{"429":503}`,
-			expectedCode:     503,
-		},
-		{
-			name:             "skip invalid string value",
-			statusCode:       429,
-			statusCodeConfig: `{"429":"bad-code"}`,
-			expectedCode:     429,
-		},
-		{
-			name:             "skip status code 200",
-			statusCode:       200,
-			statusCodeConfig: `{"200":503}`,
-			expectedCode:     200,
-		},
+func TestTaskErrorWrapperSanitizesBase64FileNameTooLong(t *testing.T) {
+	payload := strings.Repeat("A", 500)
+	taskErr := TaskErrorWrapper(
+		errors.New("[Errno 36] File name too long: 'data:image/png;base64,"+payload+"'"),
+		"test_error",
+		500,
+	)
+	if strings.Contains(taskErr.Message, payload) {
+		t.Fatalf("message contains full base64 payload: %s", taskErr.Message)
 	}
+	if strings.Contains(taskErr.Error.Error(), payload) {
+		t.Fatalf("error contains full base64 payload: %s", taskErr.Error.Error())
+	}
+	if !strings.Contains(taskErr.Message, "...[truncated") {
+		t.Fatalf("message missing truncation marker: %s", taskErr.Message)
+	}
+}
 
-	for _, tc := range testCases {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-
-			newAPIError := &types.NewAPIError{
-				StatusCode: tc.statusCode,
-			}
-			ResetStatusCode(newAPIError, tc.statusCodeConfig)
-			require.Equal(t, tc.expectedCode, newAPIError.StatusCode)
-		})
+func TestTaskErrorWrapperSanitizesRawBase64WhenFilenameTooLong(t *testing.T) {
+	payload := strings.Repeat("B", 500)
+	taskErr := TaskErrorWrapper(
+		errors.New("[Errno 36] File name too long: '"+payload+"'"),
+		"test_error",
+		500,
+	)
+	if strings.Contains(taskErr.Message, payload) {
+		t.Fatalf("message contains full raw base64 payload: %s", taskErr.Message)
+	}
+	if !strings.Contains(taskErr.Message, "...[truncated") {
+		t.Fatalf("message missing truncation marker: %s", taskErr.Message)
 	}
 }

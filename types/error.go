@@ -128,7 +128,7 @@ func (e *NewAPIError) Error() string {
 		// fallback message when underlying error is missing
 		return string(e.errorCode)
 	}
-	return e.Err.Error()
+	return common.MaskMediaBase64Info(e.Err.Error())
 }
 
 func (e *NewAPIError) ErrorWithStatusCode() string {

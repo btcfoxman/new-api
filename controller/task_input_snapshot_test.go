@@ -92,6 +92,47 @@ func TestBuildTaskInputSnapshotFromMapTruncatesNestedBase64ImageFields(t *testin
 	}
 }
 
+func TestBuildTaskInputSnapshotFromMapTruncatesContentMediaBase64Fields(t *testing.T) {
+	imagePayload := strings.Repeat("D", 360)
+	audioPayload := strings.Repeat("E", 340)
+	videoPayload := strings.Repeat("F", 320)
+	snapshot := buildTaskInputSnapshotFromMap(map[string]any{
+		"content": []any{
+			map[string]any{
+				"type": "image_url",
+				"image_url": map[string]any{
+					"url": "data:image/png;base64," + imagePayload,
+				},
+			},
+			map[string]any{
+				"type": "audio_url",
+				"audio_url": map[string]any{
+					"url": "data:audio/mpeg;base64," + audioPayload,
+				},
+			},
+		},
+		"input": map[string]any{
+			"media": []any{
+				map[string]any{
+					"type":      "video",
+					"video_url": videoPayload,
+				},
+			},
+		},
+	})
+	if snapshot == "" {
+		t.Fatal("snapshot is empty")
+	}
+	for _, payload := range []string{imagePayload, audioPayload, videoPayload} {
+		if strings.Contains(snapshot, payload) {
+			t.Fatalf("snapshot contains full media base64 payload: %s", snapshot)
+		}
+	}
+	if !strings.Contains(snapshot, "...[truncated") {
+		t.Fatalf("snapshot missing truncation marker: %s", snapshot)
+	}
+}
+
 func TestBuildTaskInputSnapshotFromMapKeepsLongNonBase64ImageURL(t *testing.T) {
 	longURL := "https://example.com/image.png?token=" + strings.Repeat("A", 320)
 	snapshot := buildTaskInputSnapshotFromMap(map[string]any{

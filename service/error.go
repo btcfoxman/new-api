@@ -189,19 +189,20 @@ func TaskErrorWrapperLocal(err error, code string, statusCode int) *dto.TaskErro
 }
 
 func TaskErrorWrapper(err error, code string, statusCode int) *dto.TaskError {
-	text := err.Error()
+	text := sanitizeTaskErrorText(err.Error())
 	lowerText := strings.ToLower(text)
 	if strings.Contains(lowerText, "post") || strings.Contains(lowerText, "dial") || strings.Contains(lowerText, "http") {
 		common.SysLog(fmt.Sprintf("error: %s", text))
-		//text = "请求上游地址失败"
+		//text = "????????????????????????"
 		text = common.MaskSensitiveInfo(text)
 	}
-	//避免暴露内部错误
+	sanitizedErr := errors.New(text)
+	//????????????????????????
 	taskError := &dto.TaskError{
 		Code:       code,
 		Message:    text,
 		StatusCode: statusCode,
-		Error:      err,
+		Error:      sanitizedErr,
 	}
 
 	return taskError
@@ -212,10 +213,103 @@ func TaskErrorFromAPIError(apiErr *types.NewAPIError) *dto.TaskError {
 	if apiErr == nil {
 		return nil
 	}
+	message := sanitizeTaskErrorText(apiErr.Err.Error())
 	return &dto.TaskError{
 		Code:       string(apiErr.GetErrorCode()),
-		Message:    apiErr.Err.Error(),
+		Message:    message,
 		StatusCode: apiErr.StatusCode,
-		Error:      apiErr.Err,
+		Error:      errors.New(message),
 	}
+}
+
+const (
+	taskErrorBase64PreviewChars = 30
+	taskErrorBase64MinChars     = 256
+)
+
+func sanitizeTaskErrorText(text string) string {
+	if text == "" {
+		return text
+	}
+	text = sanitizeTaskErrorDataURIs(text)
+	return sanitizeTaskErrorLongBase64Runs(text)
+}
+
+func sanitizeTaskErrorDataURIs(text string) string {
+	const marker = ";base64,"
+	lower := strings.ToLower(text)
+	var out strings.Builder
+	offset := 0
+	for {
+		idx := strings.Index(lower[offset:], marker)
+		if idx < 0 {
+			out.WriteString(text[offset:])
+			break
+		}
+		idx += offset
+		payloadStart := idx + len(marker)
+		payloadEnd := payloadStart
+		for payloadEnd < len(text) && isTaskErrorBase64Byte(text[payloadEnd]) {
+			payloadEnd++
+		}
+		out.WriteString(text[offset:payloadStart])
+		out.WriteString(truncateTaskErrorPayload(text[payloadStart:payloadEnd]))
+		offset = payloadEnd
+	}
+	return out.String()
+}
+
+func sanitizeTaskErrorLongBase64Runs(text string) string {
+	lower := strings.ToLower(text)
+	aggressive := strings.Contains(lower, "base64") ||
+		strings.Contains(lower, "file name too long") ||
+		strings.Contains(lower, "errno 36")
+
+	var out strings.Builder
+	for i := 0; i < len(text); {
+		if !isTaskErrorBase64Byte(text[i]) {
+			out.WriteByte(text[i])
+			i++
+			continue
+		}
+		start := i
+		hasBase64Special := false
+		for i < len(text) && isTaskErrorBase64Byte(text[i]) {
+			switch text[i] {
+			case '+', '/', '=', '_', '-':
+				hasBase64Special = true
+			}
+			i++
+		}
+		segment := text[start:i]
+		if len(segment) >= taskErrorBase64MinChars && (aggressive || hasBase64Special) {
+			out.WriteString(truncateTaskErrorPayload(segment))
+		} else {
+			out.WriteString(segment)
+		}
+	}
+	return out.String()
+}
+
+func isTaskErrorBase64Byte(b byte) bool {
+	switch {
+	case b >= 'A' && b <= 'Z':
+		return true
+	case b >= 'a' && b <= 'z':
+		return true
+	case b >= '0' && b <= '9':
+		return true
+	case b == '+', b == '/', b == '=', b == '_', b == '-':
+		return true
+	default:
+		return false
+	}
+}
+
+func truncateTaskErrorPayload(s string) string {
+	if len(s) <= taskErrorBase64PreviewChars {
+		return s
+	}
+	omitted := len(s) - taskErrorBase64PreviewChars
+	return s[:taskErrorBase64PreviewChars] + fmt.Sprintf("...[truncated %d chars]", omitted)
 }

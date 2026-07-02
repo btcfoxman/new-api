@@ -20,6 +20,11 @@ var (
 	maskApiKeyPattern = regexp.MustCompile(`(['"]?)api_key:([^\s'"]+)(['"]?)`)
 )
 
+const (
+	maskMediaBase64PreviewChars = 30
+	maskMediaBase64MinChars     = 256
+)
+
 func GetStringIfEmpty(str string, defaultValue string) string {
 	if str == "" {
 		return defaultValue
@@ -186,6 +191,8 @@ func maskHostForPlainDomain(domain string) string {
 // www.openai.com -> ***.***.com
 // api.openai.com -> ***.***.com
 func MaskSensitiveInfo(str string) string {
+	str = MaskMediaBase64Info(str)
+
 	// Mask URLs
 	str = maskURLPattern.ReplaceAllStringFunc(str, func(urlStr string) string {
 		u, err := url.Parse(urlStr)
@@ -251,4 +258,91 @@ func MaskSensitiveInfo(str string) string {
 	str = maskApiKeyPattern.ReplaceAllString(str, "${1}api_key:***${3}")
 
 	return str
+}
+
+func MaskMediaBase64Info(str string) string {
+	if str == "" {
+		return str
+	}
+	str = maskMediaBase64DataURIs(str)
+	return maskMediaBase64LongRuns(str)
+}
+
+func maskMediaBase64DataURIs(str string) string {
+	const marker = ";base64,"
+	lower := strings.ToLower(str)
+	var out strings.Builder
+	offset := 0
+	for {
+		idx := strings.Index(lower[offset:], marker)
+		if idx < 0 {
+			out.WriteString(str[offset:])
+			break
+		}
+		idx += offset
+		payloadStart := idx + len(marker)
+		payloadEnd := payloadStart
+		for payloadEnd < len(str) && isMediaBase64Byte(str[payloadEnd]) {
+			payloadEnd++
+		}
+		out.WriteString(str[offset:payloadStart])
+		out.WriteString(truncateMediaBase64Payload(str[payloadStart:payloadEnd]))
+		offset = payloadEnd
+	}
+	return out.String()
+}
+
+func maskMediaBase64LongRuns(str string) string {
+	lower := strings.ToLower(str)
+	aggressive := strings.Contains(lower, "base64") ||
+		strings.Contains(lower, "file name too long") ||
+		strings.Contains(lower, "errno 36")
+
+	var out strings.Builder
+	for i := 0; i < len(str); {
+		if !isMediaBase64Byte(str[i]) {
+			out.WriteByte(str[i])
+			i++
+			continue
+		}
+		start := i
+		hasBase64Special := false
+		for i < len(str) && isMediaBase64Byte(str[i]) {
+			switch str[i] {
+			case '+', '/', '=', '_', '-':
+				hasBase64Special = true
+			}
+			i++
+		}
+		segment := str[start:i]
+		if len(segment) >= maskMediaBase64MinChars && (aggressive || hasBase64Special) {
+			out.WriteString(truncateMediaBase64Payload(segment))
+		} else {
+			out.WriteString(segment)
+		}
+	}
+	return out.String()
+}
+
+func isMediaBase64Byte(b byte) bool {
+	switch {
+	case b >= 'A' && b <= 'Z':
+		return true
+	case b >= 'a' && b <= 'z':
+		return true
+	case b >= '0' && b <= '9':
+		return true
+	case b == '+', b == '/', b == '=', b == '_', b == '-':
+		return true
+	default:
+		return false
+	}
+}
+
+func truncateMediaBase64Payload(s string) string {
+	if len(s) <= maskMediaBase64PreviewChars {
+		return s
+	}
+	omitted := len(s) - maskMediaBase64PreviewChars
+	return s[:maskMediaBase64PreviewChars] + "...[truncated " + strconv.Itoa(omitted) + " chars]"
 }
