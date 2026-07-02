@@ -130,6 +130,9 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		}
 	}
 	info.Action = action
+	if billingModelName := normalizeViduBillingPriceModelName(taskcommon.DefaultString(info.OriginModelName, req.Model)); billingModelName != "" && billingModelName != strings.TrimSpace(info.OriginModelName) {
+		c.Set("task_billing_model", billingModelName)
+	}
 	c.Set("task_request", req)
 	return nil
 }
@@ -239,8 +242,12 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 	ratios := map[string]float64{
 		"seconds": float64(duration),
 	}
+	if isViduQ3TurboBillingModel(info.OriginModelName) {
+		c.Set("force_apply_task_other_ratios", true)
+	}
 
-	rule, ok := ratio_setting.GetTaskGroupPricingRule(viduBillingModelName(info), info.UsingGroup)
+	ruleModelName, ruleGroupName := viduBillingRuleTarget(info)
+	rule, ok := ratio_setting.GetTaskGroupPricingRule(ruleModelName, ruleGroupName)
 	if !ok || rule.BasePrice == nil || *rule.BasePrice <= 0 {
 		return ratios
 	}
@@ -326,11 +333,41 @@ func (a *TaskAdaptor) GetChannelName() string {
 	return "vidu"
 }
 
-func viduBillingModelName(info *relaycommon.RelayInfo) string {
+func viduBillingRuleTarget(info *relaycommon.RelayInfo) (string, string) {
 	if info == nil {
-		return ""
+		return "", ""
 	}
-	return strings.TrimSpace(info.OriginModelName)
+	modelName := normalizeViduBillingPriceModelName(info.OriginModelName)
+	groupName := info.UsingGroup
+	lowerModelName := strings.ToLower(modelName)
+	if strings.HasPrefix(lowerModelName, "viduq3-turbo") {
+		if strings.Contains(lowerModelName, "official") {
+			groupName = "official"
+		} else if strings.Contains(lowerModelName, "stable") {
+			groupName = "stable"
+		}
+		return "viduq3-turbo", groupName
+	}
+	return strings.TrimSpace(modelName), groupName
+}
+
+func normalizeViduBillingPriceModelName(modelName string) string {
+	trimmedModelName := strings.TrimSpace(modelName)
+	lowerModelName := strings.ToLower(trimmedModelName)
+	if !strings.HasPrefix(lowerModelName, "viduq3-turbo") {
+		return trimmedModelName
+	}
+	if strings.Contains(lowerModelName, "official") {
+		return "viduq3-turbo-official"
+	}
+	if strings.Contains(lowerModelName, "stable") {
+		return "viduq3-turbo-stable"
+	}
+	return "viduq3-turbo"
+}
+
+func isViduQ3TurboBillingModel(modelName string) bool {
+	return strings.HasPrefix(strings.ToLower(normalizeViduBillingPriceModelName(modelName)), "viduq3-turbo")
 }
 
 func viduResolutionPrices(dimensions map[string]any) map[string]float64 {
