@@ -193,11 +193,11 @@ func TaskErrorWrapper(err error, code string, statusCode int) *dto.TaskError {
 	lowerText := strings.ToLower(text)
 	if strings.Contains(lowerText, "post") || strings.Contains(lowerText, "dial") || strings.Contains(lowerText, "http") {
 		common.SysLog(fmt.Sprintf("error: %s", text))
-		//text = "????????????????????????"
+
 		text = common.MaskSensitiveInfo(text)
 	}
 	sanitizedErr := errors.New(text)
-	//????????????????????????
+
 	taskError := &dto.TaskError{
 		Code:       code,
 		Message:    text,
