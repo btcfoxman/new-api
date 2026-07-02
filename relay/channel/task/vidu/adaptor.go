@@ -19,6 +19,7 @@ import (
 	taskcommon "github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 
 	"github.com/pkg/errors"
 )
@@ -219,6 +220,46 @@ func (a *TaskAdaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, req
 	return channel.DoTaskApiRequest(a, c, info, requestBody)
 }
 
+func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInfo) map[string]float64 {
+	req, err := relaycommon.GetTaskRequest(c)
+	if err != nil {
+		return nil
+	}
+	rawReq := map[string]any{}
+	_ = common.UnmarshalBodyReusable(c, &rawReq)
+	payload, err := a.convertToRequestPayload(&req, info, rawReq)
+	if err != nil || payload == nil {
+		return nil
+	}
+
+	duration := payload.Duration
+	if duration <= 0 {
+		duration = 5
+	}
+	ratios := map[string]float64{
+		"seconds": float64(duration),
+	}
+
+	rule, ok := ratio_setting.GetTaskGroupPricingRule(viduBillingModelName(info), info.UsingGroup)
+	if !ok || rule.BasePrice == nil || *rule.BasePrice <= 0 {
+		return ratios
+	}
+	resolutionPrices := viduResolutionPrices(rule.Dimensions)
+	if len(resolutionPrices) == 0 {
+		return ratios
+	}
+	resolution := normalizeViduResolution(payload.Resolution, req.Size)
+	if resolution == "" {
+		resolution = "1080p"
+	}
+	price, ok := resolutionPrices[resolution]
+	if !ok || price <= 0 {
+		return ratios
+	}
+	ratios["resolution-"+resolution] = price / *rule.BasePrice
+	return ratios
+}
+
 func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (taskID string, taskData []byte, taskErr *dto.TaskError) {
 	responseBody, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -283,6 +324,72 @@ func (a *TaskAdaptor) GetModelList() []string {
 
 func (a *TaskAdaptor) GetChannelName() string {
 	return "vidu"
+}
+
+func viduBillingModelName(info *relaycommon.RelayInfo) string {
+	if info == nil {
+		return ""
+	}
+	return strings.TrimSpace(info.OriginModelName)
+}
+
+func viduResolutionPrices(dimensions map[string]any) map[string]float64 {
+	raw, ok := dimensions["resolution_prices"].(map[string]any)
+	if !ok || len(raw) == 0 {
+		return nil
+	}
+	prices := make(map[string]float64, len(raw))
+	for key, value := range raw {
+		price, ok := viduFloat(value)
+		if !ok || price <= 0 {
+			continue
+		}
+		prices[normalizeViduResolution(key, "")] = price
+	}
+	return prices
+}
+
+func viduFloat(value any) (float64, bool) {
+	switch typed := value.(type) {
+	case float64:
+		return typed, true
+	case float32:
+		return float64(typed), true
+	case int:
+		return float64(typed), true
+	case int64:
+		return float64(typed), true
+	case int32:
+		return float64(typed), true
+	default:
+		return 0, false
+	}
+}
+
+func normalizeViduResolution(values ...string) string {
+	for _, value := range values {
+		text := strings.ToLower(strings.TrimSpace(value))
+		if text == "" {
+			continue
+		}
+		text = strings.ReplaceAll(text, "*", "x")
+		text = strings.ReplaceAll(text, " ", "")
+		switch text {
+		case "540p", "540":
+			return "540p"
+		case "720p", "720":
+			return "720p"
+		case "1080p", "1080":
+			return "1080p"
+		case "960x540", "540x960":
+			return "540p"
+		case "1280x720", "720x1280":
+			return "720p"
+		case "1920x1080", "1080x1920":
+			return "1080p"
+		}
+	}
+	return ""
 }
 
 // ============================
