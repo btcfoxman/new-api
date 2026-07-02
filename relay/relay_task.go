@@ -197,13 +197,17 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 			info.PriceData.AddOtherRatio(k, v)
 		}
 	}
+	if resolution := taskBillingResolution(c); resolution != "" {
+		helper.AddTaskGroupResolutionRatio(info, resolution)
+	}
 
 	// 6. 将 OtherRatios 应用到基础额度
 	//    对“固定按次”分组，不应用 seconds/size 等倍率，避免与分组计费模式冲突。
 	forceApplyTaskOtherRatios := c.GetBool("force_apply_task_other_ratios")
 	hasTaskGroupPricingDimensions := helper.HasTaskGroupPricingDimensions(info)
 	shouldApplyTaskOtherRatios := forceApplyTaskOtherRatios || helper.ShouldApplyTaskOtherRatios(info)
-	if common.StringsContains(constant.TaskPricePatches, modelName) && !forceApplyTaskOtherRatios && !hasTaskGroupPricingDimensions {
+	hasTaskGroupPricingRule := helper.HasTaskGroupPricingRule(info)
+	if common.StringsContains(constant.TaskPricePatches, modelName) && !forceApplyTaskOtherRatios && !hasTaskGroupPricingRule && !hasTaskGroupPricingDimensions {
 		shouldApplyTaskOtherRatios = false
 	}
 	if shouldApplyTaskOtherRatios {
@@ -288,6 +292,71 @@ func recalcQuotaFromRatios(info *relaycommon.RelayInfo, ratios map[string]float6
 		}
 	}
 	return int(result)
+}
+
+func taskBillingResolution(c *gin.Context) string {
+	req, err := relaycommon.GetTaskRequest(c)
+	if err != nil {
+		return ""
+	}
+	rawReq := map[string]any{}
+	_ = common.UnmarshalBodyReusable(c, &rawReq)
+	return normalizeTaskBillingResolution(
+		taskBillingString(rawReq["resolution"]),
+		taskBillingMapString(req.Parameters, "resolution"),
+		taskBillingMapString(req.Metadata, "resolution"),
+		req.Size,
+		taskBillingString(rawReq["size"]),
+		taskBillingMapString(req.Parameters, "size"),
+		taskBillingMapString(req.Metadata, "size"),
+	)
+}
+
+func taskBillingMapString(values map[string]any, key string) string {
+	if len(values) == 0 {
+		return ""
+	}
+	return taskBillingString(values[key])
+}
+
+func taskBillingString(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return typed
+	case fmt.Stringer:
+		return typed.String()
+	default:
+		return ""
+	}
+}
+
+func normalizeTaskBillingResolution(values ...string) string {
+	for _, value := range values {
+		text := strings.ToLower(strings.TrimSpace(value))
+		if text == "" {
+			continue
+		}
+		text = strings.ReplaceAll(text, "_", "")
+		text = strings.ReplaceAll(text, "-", "")
+		text = strings.ReplaceAll(text, " ", "")
+		switch {
+		case strings.Contains(text, "1080"):
+			return "1080p"
+		case strings.Contains(text, "720"):
+			return "720p"
+		case strings.Contains(text, "540"):
+			return "540p"
+		case strings.Contains(text, "480"):
+			return "480p"
+		case strings.Contains(text, "4k"):
+			return "4k"
+		case strings.Contains(text, "2k"):
+			return "2k"
+		case strings.Contains(text, "1k"):
+			return "1k"
+		}
+	}
+	return ""
 }
 
 var fetchRespBuilders = map[int]func(c *gin.Context) (respBody []byte, taskResp *dto.TaskError){

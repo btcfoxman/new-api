@@ -1,7 +1,9 @@
 package helper
 
 import (
+	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
@@ -239,4 +241,53 @@ func ShouldApplyTaskOtherRatios(info *relaycommon.RelayInfo) bool {
 func HasTaskGroupPricingDimensions(info *relaycommon.RelayInfo) bool {
 	rule, ok := ratio_setting.GetTaskGroupPricingRule(info.OriginModelName, info.UsingGroup)
 	return ok && len(rule.Dimensions) > 0
+}
+
+func HasTaskGroupPricingRule(info *relaycommon.RelayInfo) bool {
+	_, ok := ratio_setting.GetTaskGroupPricingRule(info.OriginModelName, info.UsingGroup)
+	return ok
+}
+
+func AddTaskGroupResolutionRatio(info *relaycommon.RelayInfo, resolution string) {
+	if info == nil || strings.TrimSpace(resolution) == "" {
+		return
+	}
+	rule, ok := ratio_setting.GetTaskGroupPricingRule(info.OriginModelName, info.UsingGroup)
+	if !ok || rule.IgnoreOtherRatios || rule.BasePrice == nil || *rule.BasePrice <= 0 {
+		return
+	}
+	rawPrices, ok := rule.Dimensions["resolution_prices"].(map[string]any)
+	if !ok || len(rawPrices) == 0 {
+		return
+	}
+	resolution = strings.ToLower(strings.TrimSpace(resolution))
+	for key, rawPrice := range rawPrices {
+		if strings.ToLower(strings.TrimSpace(key)) != resolution {
+			continue
+		}
+		price, ok := parseTaskDimensionFloat(rawPrice)
+		if !ok || price <= 0 {
+			return
+		}
+		info.PriceData.AddOtherRatio("resolution-"+resolution, price/(*rule.BasePrice))
+		return
+	}
+}
+
+func parseTaskDimensionFloat(value any) (float64, bool) {
+	switch typed := value.(type) {
+	case float64:
+		return typed, true
+	case float32:
+		return float64(typed), true
+	case int:
+		return float64(typed), true
+	case int64:
+		return float64(typed), true
+	case json.Number:
+		parsed, err := typed.Float64()
+		return parsed, err == nil
+	default:
+		return 0, false
+	}
 }
