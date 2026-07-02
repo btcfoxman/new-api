@@ -498,7 +498,7 @@ export const useLogsData = () => {
 
         let content = '';
         if (!isViolationFeeLog) {
-          const isTaskLog = other?.is_task === true || other?.task_id != null;
+
           if (isTaskLog && other?.model_price === -1) {
             content = renderTaskBillingProcess(other, logs[i].content);
           } else if (other?.ws || other?.audio) {

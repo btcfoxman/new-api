@@ -242,9 +242,6 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 	ratios := map[string]float64{
 		"seconds": float64(duration),
 	}
-	if isViduQ3TurboBillingModel(info.OriginModelName) {
-		c.Set("force_apply_task_other_ratios", true)
-	}
 
 	ruleModelName, ruleGroupName := viduBillingRuleTarget(info)
 	rule, ok := ratio_setting.GetTaskGroupPricingRule(ruleModelName, ruleGroupName)
@@ -364,10 +361,6 @@ func normalizeViduBillingPriceModelName(modelName string) string {
 		return "viduq3-turbo-stable"
 	}
 	return "viduq3-turbo"
-}
-
-func isViduQ3TurboBillingModel(modelName string) bool {
-	return strings.HasPrefix(strings.ToLower(normalizeViduBillingPriceModelName(modelName)), "viduq3-turbo")
 }
 
 func viduResolutionPrices(dimensions map[string]any) map[string]float64 {

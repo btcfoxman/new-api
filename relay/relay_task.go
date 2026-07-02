@@ -201,7 +201,12 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	// 6. 将 OtherRatios 应用到基础额度
 	//    对“固定按次”分组，不应用 seconds/size 等倍率，避免与分组计费模式冲突。
 	forceApplyTaskOtherRatios := c.GetBool("force_apply_task_other_ratios")
-	if (forceApplyTaskOtherRatios || !common.StringsContains(constant.TaskPricePatches, modelName)) && (forceApplyTaskOtherRatios || helper.ShouldApplyTaskOtherRatios(info)) {
+	hasTaskGroupPricingDimensions := helper.HasTaskGroupPricingDimensions(info)
+	shouldApplyTaskOtherRatios := forceApplyTaskOtherRatios || helper.ShouldApplyTaskOtherRatios(info)
+	if common.StringsContains(constant.TaskPricePatches, modelName) && !forceApplyTaskOtherRatios && !hasTaskGroupPricingDimensions {
+		shouldApplyTaskOtherRatios = false
+	}
+	if shouldApplyTaskOtherRatios {
 		for _, ra := range info.PriceData.OtherRatios {
 			if ra != 1.0 {
 				info.PriceData.Quota = int(float64(info.PriceData.Quota) * ra)

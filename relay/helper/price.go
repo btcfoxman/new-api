@@ -230,5 +230,13 @@ func ShouldApplyTaskOtherRatios(info *relaycommon.RelayInfo) bool {
 	if rule.IgnoreOtherRatios {
 		return false
 	}
+	if len(rule.Dimensions) > 0 {
+		return true
+	}
 	return rule.BillingMode != "per_call"
+}
+
+func HasTaskGroupPricingDimensions(info *relaycommon.RelayInfo) bool {
+	rule, ok := ratio_setting.GetTaskGroupPricingRule(info.OriginModelName, info.UsingGroup)
+	return ok && len(rule.Dimensions) > 0
 }
