@@ -40,6 +40,7 @@ import InvitationCard from './InvitationCard';
 import TransferModal from './modals/TransferModal';
 import PaymentConfirmModal from './modals/PaymentConfirmModal';
 import TopupHistoryModal from './modals/TopupHistoryModal';
+import InvoiceWalletCard from './InvoiceWalletCard';
 
 const TopUp = () => {
   const { t } = useTranslation();
@@ -894,6 +895,9 @@ const TopUp = () => {
           affLink={affLink}
           handleAffLinkClick={handleAffLinkClick}
         />
+      </div>
+      <div className='mt-6'>
+        <InvoiceWalletCard t={t} renderQuota={renderQuota} />
       </div>
     </div>
   );
