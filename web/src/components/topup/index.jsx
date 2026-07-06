@@ -28,6 +28,8 @@ import {
   renderQuotaWithAmount,
   copy,
   getQuotaPerUnit,
+  isAdmin,
+  isRoot,
 } from '../../helpers';
 import { Modal, Toast } from '@douyinfe/semi-ui';
 import { useTranslation } from 'react-i18next';
@@ -896,9 +898,15 @@ const TopUp = () => {
           handleAffLinkClick={handleAffLinkClick}
         />
       </div>
-      <div className='mt-6'>
-        <InvoiceWalletCard t={t} renderQuota={renderQuota} />
-      </div>
+      {(statusState?.status?.invoice_enabled || isAdmin() || isRoot()) && (
+        <div className='mt-6'>
+          <InvoiceWalletCard
+            t={t}
+            renderQuota={renderQuota}
+            invoiceEnabled={!!statusState?.status?.invoice_enabled}
+          />
+        </div>
+      )}
     </div>
   );
 };

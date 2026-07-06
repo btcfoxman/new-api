@@ -356,7 +356,7 @@ func SaveInvoiceSubject(userId int, subjectType, realName, companyName, idNo, ta
 	if subjectType != InvoiceSubjectTypePersonal && subjectType != InvoiceSubjectTypeCompany {
 		return nil, errors.New("认证类型错误")
 	}
-	if validUntil <= now {
+	if validUntil != 0 && validUntil <= now {
 		return nil, errors.New("证件有效期必须晚于当前时间")
 	}
 	if subjectType == InvoiceSubjectTypePersonal {
