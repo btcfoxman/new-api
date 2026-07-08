@@ -148,10 +148,12 @@ func GetTopUpDetail(c *gin.Context) {
 func ExtPayNotify(c *gin.Context) {
 	var payload service.ExtPayNotifyPayload
 	if err := c.ShouldBindJSON(&payload); err != nil {
+		common.SysError("extpay notify bind failed: " + err.Error())
 		c.String(http.StatusOK, "fail")
 		return
 	}
 	if err := service.VerifyExtPayNotify(&payload); err != nil {
+		common.SysError("extpay notify verify failed: " + err.Error())
 		c.String(http.StatusOK, "fail")
 		return
 	}
@@ -161,8 +163,9 @@ func ExtPayNotify(c *gin.Context) {
 		return
 	}
 
-	amount, err := decimal.NewFromString(payload.Amount)
+	amount, err := decimal.NewFromString(payload.Amount.String())
 	if err != nil {
+		common.SysError("extpay notify amount invalid: " + err.Error())
 		c.String(http.StatusOK, "fail")
 		return
 	}

@@ -82,18 +82,45 @@ type ExtPayQueryOrderResponse struct {
 }
 
 type ExtPayNotifyPayload struct {
-	AppID           string `json:"appId"`
-	MerchantOrderNo string `json:"merchantOrderNo"`
-	ExternalOrderNo string `json:"externalOrderNo"`
-	GatewayOrderNo  string `json:"gatewayOrderNo"`
-	UID             string `json:"uid"`
-	Amount          string `json:"amount"`
-	Status          string `json:"status"`
-	PaidAt          string `json:"paidAt"`
-	TradeNo         string `json:"tradeNo"`
-	Timestamp       int64  `json:"timestamp"`
-	Nonce           string `json:"nonce"`
-	Sign            string `json:"sign"`
+	AppID           string       `json:"appId"`
+	MerchantOrderNo string       `json:"merchantOrderNo"`
+	ExternalOrderNo string       `json:"externalOrderNo"`
+	GatewayOrderNo  string       `json:"gatewayOrderNo"`
+	UID             string       `json:"uid"`
+	Amount          ExtPayAmount `json:"amount"`
+	Status          string       `json:"status"`
+	PaidAt          string       `json:"paidAt"`
+	TradeNo         string       `json:"tradeNo"`
+	Timestamp       int64        `json:"timestamp"`
+	Nonce           string       `json:"nonce"`
+	Sign            string       `json:"sign"`
+}
+
+type ExtPayAmount string
+
+func (a *ExtPayAmount) UnmarshalJSON(data []byte) error {
+	text := strings.TrimSpace(string(data))
+	if text == "" || text == "null" {
+		*a = ""
+		return nil
+	}
+	if strings.HasPrefix(text, `"`) {
+		var value string
+		if err := json.Unmarshal(data, &value); err != nil {
+			return err
+		}
+		*a = ExtPayAmount(strings.TrimSpace(value))
+		return nil
+	}
+	if _, err := decimal.NewFromString(text); err != nil {
+		return err
+	}
+	*a = ExtPayAmount(text)
+	return nil
+}
+
+func (a ExtPayAmount) String() string {
+	return string(a)
 }
 
 type extPayEnvelope struct {
@@ -239,7 +266,7 @@ func VerifyExtPayNotify(payload *ExtPayNotifyPayload) error {
 		return fmt.Errorf("callback expired")
 	}
 	expected := signExtPayPayload(extPayStringSetting("ExtPaySecret", setting.ExtPaySecret), map[string]any{
-		"amount":          payload.Amount,
+		"amount":          payload.Amount.String(),
 		"appId":           payload.AppID,
 		"externalOrderNo": payload.ExternalOrderNo,
 		"gatewayOrderNo":  payload.GatewayOrderNo,
