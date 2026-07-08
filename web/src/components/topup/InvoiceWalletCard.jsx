@@ -49,7 +49,7 @@ const pageQuery = (page, pageSize, extras = {}) => {
   return params.toString();
 };
 const textOfSubject = (record) => (record?.subject_type === 'company' ? record?.company_name : record?.real_name) || '-';
-const docOfSubject = (record) => (record?.subject_type === 'company' ? record?.masked_tax_no : record?.masked_id_no) || '-';
+const docOfSubject = (record) => (record?.subject_type === 'company' ? (record?.tax_no || record?.masked_tax_no) : (record?.id_no || record?.masked_id_no)) || '-';
 
 const InvoiceWalletCard = ({ t, renderQuota, invoiceEnabled = false }) => {
   const adminUser = isAdmin();
@@ -70,6 +70,7 @@ const InvoiceWalletCard = ({ t, renderQuota, invoiceEnabled = false }) => {
   const [topupsPage, setTopupsPage] = useState(1);
   const [topupsPageSize, setTopupsPageSize] = useState(10);
   const [topupsKeyword, setTopupsKeyword] = useState('');
+  const [invoiceTargetUserId, setInvoiceTargetUserId] = useState('');
   const [selectedRowKeys, setSelectedRowKeys] = useState([]);
   const [selectedRows, setSelectedRows] = useState([]);
 
@@ -112,6 +113,8 @@ const InvoiceWalletCard = ({ t, renderQuota, invoiceEnabled = false }) => {
 
   const subjectVerified = subject?.status === 'verified';
   const invoiceAmount = useMemo(() => applyRows.reduce((sum, item) => sum + Number(item.money || 0), 0), [applyRows]);
+  const targetUserQuery = () => (adminUser && String(invoiceTargetUserId || '').trim() ? { user_id: String(invoiceTargetUserId).trim() } : {});
+  const viewingOtherUserInvoices = adminUser && String(invoiceTargetUserId || '').trim() !== '';
 
   useEffect(() => setFeatureEnabled(!!invoiceEnabled), [invoiceEnabled]);
 
@@ -130,7 +133,7 @@ const InvoiceWalletCard = ({ t, renderQuota, invoiceEnabled = false }) => {
   const loadTopups = async (page = topupsPage, pageSize = topupsPageSize) => {
     setTopupsLoading(true);
     try {
-      const res = await API.get(`/api/user/invoices/topups?${pageQuery(page, pageSize, { keyword: topupsKeyword })}`);
+      const res = await API.get(`/api/user/invoices/topups?${pageQuery(page, pageSize, { keyword: topupsKeyword, ...targetUserQuery() })}`);
       if (res.data?.success) {
         setTopups(res.data.data?.items || []);
         setTopupsTotal(res.data.data?.total || 0);
@@ -144,7 +147,7 @@ const InvoiceWalletCard = ({ t, renderQuota, invoiceEnabled = false }) => {
   const loadInvoices = async (page = invoicesPage, pageSize = invoicesPageSize) => {
     setInvoicesLoading(true);
     try {
-      const res = await API.get(`/api/user/invoices?${pageQuery(page, pageSize)}`);
+      const res = await API.get(`/api/user/invoices?${pageQuery(page, pageSize, targetUserQuery())}`);
       if (res.data?.success) {
         setInvoices(res.data.data?.items || []);
         setInvoicesTotal(res.data.data?.total || 0);
@@ -221,9 +224,16 @@ const InvoiceWalletCard = ({ t, renderQuota, invoiceEnabled = false }) => {
   }, [featureVisible, activeKey, topupsPage, topupsPageSize, invoicesPage, invoicesPageSize, adminSubjectsPage, adminSubjectsPageSize, adminInvoicesPage, adminInvoicesPageSize]);
   useEffect(() => {
     if (!featureVisible || activeKey !== 'topups') return;
+    setSelectedRowKeys([]);
+    setSelectedRows([]);
     setTopupsPage(1);
     loadTopups(1, topupsPageSize);
-  }, [topupsKeyword]);
+  }, [topupsKeyword, invoiceTargetUserId]);
+  useEffect(() => {
+    if (!featureVisible || activeKey !== 'invoices') return;
+    setInvoicesPage(1);
+    loadInvoices(1, invoicesPageSize);
+  }, [invoiceTargetUserId]);
   useEffect(() => {
     if (!featureVisible || activeKey !== 'subject_admin') return;
     setAdminSubjectsPage(1);
@@ -288,6 +298,7 @@ const InvoiceWalletCard = ({ t, renderQuota, invoiceEnabled = false }) => {
     if (!subjectVerified) return showError('请先完成实名认证');
     if (!rows.length) return showError('请选择需要开票的充值记录');
     setApplyRows(rows);
+    setApplyEmail(subject?.default_email || applyEmail || '');
     setApplyVisible(true);
   };
   const submitApply = async () => {
@@ -296,6 +307,7 @@ const InvoiceWalletCard = ({ t, renderQuota, invoiceEnabled = false }) => {
       const res = await API.post('/api/user/invoices/apply', { topup_ids: applyRows.map((item) => item.id), email: applyEmail });
       if (res.data?.success) {
         showSuccess('开票申请已提交');
+        setSubject((prev) => (prev ? { ...prev, default_email: applyEmail } : prev));
         setApplyVisible(false);
         setSelectedRowKeys([]);
         setSelectedRows([]);
@@ -370,7 +382,6 @@ const InvoiceWalletCard = ({ t, renderQuota, invoiceEnabled = false }) => {
     }
   };
   const topupColumns = [
-    { title: 'ID', dataIndex: 'id', width: 80 },
     { title: '用户ID', dataIndex: 'user_id', width: 90 },
     { title: '用户名', dataIndex: 'username', width: 120 },
     { title: '充值时间', dataIndex: 'create_time', width: 170, render: (value) => timestamp2string(value) },
@@ -379,14 +390,13 @@ const InvoiceWalletCard = ({ t, renderQuota, invoiceEnabled = false }) => {
     { title: '支付方式', dataIndex: 'payment_method', width: 110, render: (value, record) => PAYMENT_METHOD_MAP[record.payment_channel] || PAYMENT_METHOD_MAP[value] || record.payment_channel || value || '-' },
     { title: '订单号', dataIndex: 'trade_no', render: (value) => <Text copyable={{ content: value }}>{value}</Text> },
     { title: '状态', dataIndex: 'status', width: 120, render: (_, record) => (record.invoice_status ? renderTag(INVOICE_STATUS, record.invoice_status) : <Tag color='green'>可开票</Tag>) },
-    { title: '操作', width: 110, render: (_, record) => <Button size='small' type='primary' theme='outline' disabled={!record.invoice_available || !subjectVerified} onClick={() => openApplyModal([record])}>申请开票</Button> },
+    { title: '操作', width: 110, render: (_, record) => <Button size='small' type='primary' theme='outline' disabled={!record.invoice_available || !subjectVerified || viewingOtherUserInvoices} onClick={() => openApplyModal([record])}>申请开票</Button> },
   ];
   const invoiceColumns = [
     { title: '申请ID', dataIndex: 'id', width: 90 },
     { title: '申请时间', dataIndex: 'created_at', width: 170, render: (value) => timestamp2string(value) },
     { title: '发票类型', dataIndex: 'invoice_type', width: 140, render: () => '增值税普通发票' },
     { title: '发票金额', dataIndex: 'amount', width: 120, render: (value) => <Text type='danger'>{formatMoney(value)}</Text> },
-    { title: 'Provider', dataIndex: 'provider_code', width: 130 },
     { title: '状态', dataIndex: 'status', width: 120, render: (value) => renderTag(INVOICE_STATUS, value) },
     { title: '发票号', dataIndex: 'invoice_no', width: 160, render: (value) => value || '-' },
     { title: '操作', width: 160, render: (_, record) => <Space>{record.invoice_file_url ? <Button size='small' type='primary' theme='outline' onClick={() => window.open(record.invoice_file_url, '_blank', 'noopener,noreferrer')}>下载</Button> : null}{record.status === 'pending' ? <Button size='small' theme='outline' type='danger' onClick={() => cancelInvoice(record.id)}>取消</Button> : null}</Space> },
@@ -409,7 +419,6 @@ const InvoiceWalletCard = ({ t, renderQuota, invoiceEnabled = false }) => {
     { title: '用户名', dataIndex: 'username', width: 120 },
     { title: '金额', dataIndex: 'amount', width: 110, render: (value) => <Text type='danger'>{formatMoney(value)}</Text> },
     { title: '支付渠道', dataIndex: 'payment_channel', width: 110, render: (value) => PAYMENT_METHOD_MAP[value] || value || '-' },
-    { title: 'Provider', dataIndex: 'provider_code', width: 130 },
     { title: '状态', dataIndex: 'status', width: 110, render: (value) => renderTag(INVOICE_STATUS, value) },
     { title: '发票号', dataIndex: 'invoice_no', width: 150, render: (value) => value || '-' },
     { title: '文件', dataIndex: 'invoice_file_url', width: 100, render: (value) => (value ? <Button size='small' theme='borderless' onClick={() => window.open(value, '_blank', 'noopener,noreferrer')}>查看</Button> : '-') },
@@ -425,6 +434,10 @@ const InvoiceWalletCard = ({ t, renderQuota, invoiceEnabled = false }) => {
     { title: '能力', width: 240, render: (_, record) => <Space wrap>{record.supports_create ? <Tag color='green'>开票</Tag> : null}{record.supports_red_invoice ? <Tag color='pink'>红冲</Tag> : null}{record.supports_query ? <Tag color='blue'>查询</Tag> : null}{record.supports_download ? <Tag color='cyan'>下载</Tag> : null}{record.supports_email_forward ? <Tag color='violet'>转发</Tag> : null}</Space> },
     { title: '操作', width: 90, render: (_, record) => <Button size='small' type='primary' theme='outline' onClick={() => openProviderModal(record)}>配置</Button> },
   ];
+
+  const currentInvoiceRecord = invoiceUpdateModal.record || {};
+  const currentInvoiceSubject = currentInvoiceRecord.subject || currentInvoiceRecord.subject_snapshot || {};
+  const currentInvoiceTradeNos = (currentInvoiceRecord.items || []).map((item) => item.trade_no).filter(Boolean).join(' / ');
 
   if (!featureVisible) return null;
 
@@ -452,10 +465,17 @@ const InvoiceWalletCard = ({ t, renderQuota, invoiceEnabled = false }) => {
       {!subjectVerified ? <Banner type='warning' className='mb-4' description='发票信息必须与实名认证主体一致。认证通过后，在证件有效期内不允许修改认证信息，也不能在企业/个人类型之间切换。' /> : null}
       <Tabs activeKey={activeKey} onChange={setActiveKey}>
         <Tabs.TabPane tab='充值记录' itemKey='topups'>
-          <div className='mb-3 flex flex-col md:flex-row gap-3 md:items-center md:justify-between'><Input prefix={<IconSearch />} showClear placeholder='搜索订单号' value={topupsKeyword} onChange={setTopupsKeyword} className='md:max-w-sm' /><Button type='primary' disabled={!subjectVerified || selectedRows.length === 0} onClick={() => openApplyModal(selectedRows)}>批量申请开票</Button></div>
-          <Table rowKey='id' size='small' columns={topupColumns} dataSource={topups} loading={topupsLoading} rowSelection={{ selectedRowKeys, onChange: (keys, rows) => { setSelectedRowKeys(keys); setSelectedRows(rows.filter((row) => row.invoice_available)); }, getCheckboxProps: (record) => ({ disabled: !record.invoice_available }) }} pagination={{ currentPage: topupsPage, pageSize: topupsPageSize, total: topupsTotal, showSizeChanger: true, onPageChange: setTopupsPage, onPageSizeChange: (size) => { setTopupsPageSize(size); setTopupsPage(1); } }} empty={<Empty description='暂无可展示充值记录' />} />
+          <div className='mb-3 flex flex-col md:flex-row gap-3 md:items-center md:justify-between'>
+            <Space wrap>
+              <Input prefix={<IconSearch />} showClear placeholder='搜索订单号' value={topupsKeyword} onChange={setTopupsKeyword} className='md:max-w-sm' />
+              {adminUser ? <Input showClear placeholder='用户ID，留空为自己' value={invoiceTargetUserId} onChange={setInvoiceTargetUserId} style={{ width: 180 }} /> : null}
+            </Space>
+            <Button type='primary' disabled={!subjectVerified || selectedRows.length === 0 || viewingOtherUserInvoices} onClick={() => openApplyModal(selectedRows)}>批量申请开票</Button>
+          </div>
+          <Table rowKey='id' size='small' columns={topupColumns} dataSource={topups} loading={topupsLoading} rowSelection={{ selectedRowKeys, onChange: (keys, rows) => { setSelectedRowKeys(keys); setSelectedRows(rows.filter((row) => row.invoice_available)); }, getCheckboxProps: (record) => ({ disabled: viewingOtherUserInvoices || !record.invoice_available }) }} pagination={{ currentPage: topupsPage, pageSize: topupsPageSize, total: topupsTotal, showSizeChanger: true, onPageChange: setTopupsPage, onPageSizeChange: (size) => { setTopupsPageSize(size); setTopupsPage(1); } }} empty={<Empty description='暂无可展示充值记录' />} />
         </Tabs.TabPane>
         <Tabs.TabPane tab='开票记录' itemKey='invoices'>
+          {adminUser ? <div className='mb-3 flex flex-col md:flex-row gap-3 md:items-center'><Input showClear placeholder='用户ID，留空为自己' value={invoiceTargetUserId} onChange={setInvoiceTargetUserId} style={{ width: 180 }} /></div> : null}
           <Table rowKey='id' size='small' columns={invoiceColumns} dataSource={invoices} loading={invoicesLoading} pagination={{ currentPage: invoicesPage, pageSize: invoicesPageSize, total: invoicesTotal, showSizeChanger: true, onPageChange: setInvoicesPage, onPageSizeChange: (size) => { setInvoicesPageSize(size); setInvoicesPage(1); } }} empty={<Empty description='暂无开票记录' />} />
         </Tabs.TabPane>
         {adminUser ? (
@@ -505,6 +525,15 @@ const InvoiceWalletCard = ({ t, renderQuota, invoiceEnabled = false }) => {
 
       <Modal title='处理开票申请' visible={invoiceUpdateModal.visible} onCancel={() => setInvoiceUpdateModal({ visible: false, record: null, form: {} })} onOk={submitInvoiceUpdate} confirmLoading={invoiceUpdateSubmitting} maskClosable={false}>
         <div className='space-y-4'>
+          <div className='rounded-xl border border-[var(--semi-color-border)] bg-[var(--semi-color-fill-0)] p-3 text-sm grid grid-cols-1 md:grid-cols-2 gap-2'>
+            <div>用户：{currentInvoiceRecord.username || '-'}（ID {currentInvoiceRecord.user_id || '-'}）</div>
+            <div>发票金额：{formatMoney(currentInvoiceRecord.amount)}</div>
+            <div>发票抬头：{textOfSubject(currentInvoiceSubject)}</div>
+            <div>主体类型：{SUBJECT_LABELS[currentInvoiceSubject?.subject_type] || '-'}</div>
+            <div className='md:col-span-2'>认证证件：{docOfSubject(currentInvoiceSubject)}</div>
+            <div className='md:col-span-2'>接收邮箱：{currentInvoiceRecord.email || '-'}</div>
+            <div className='md:col-span-2'>订单号：{currentInvoiceTradeNos || '-'}</div>
+          </div>
           <select className='w-full h-9 rounded-md border border-[var(--semi-color-border)] bg-[var(--semi-color-bg-0)] px-3' value={invoiceUpdateModal.form.status || 'approved'} onChange={(e) => setInvoiceUpdateModal({ ...invoiceUpdateModal, form: { ...invoiceUpdateModal.form, status: e.target.value } })}><option value='approved'>已受理</option><option value='issued'>已开票</option><option value='rejected'>已驳回</option><option value='failed'>开票失败</option><option value='red_pending'>红冲处理中</option><option value='red_issued'>已红冲</option></select>
           <Input prefix='发票号' value={invoiceUpdateModal.form.invoice_no || ''} onChange={(value) => setInvoiceUpdateModal({ ...invoiceUpdateModal, form: { ...invoiceUpdateModal.form, invoice_no: value } })} />
           <Input prefix='文件链接' value={invoiceUpdateModal.form.invoice_file_url || ''} onChange={(value) => setInvoiceUpdateModal({ ...invoiceUpdateModal, form: { ...invoiceUpdateModal.form, invoice_file_url: value } })} />

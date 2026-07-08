@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"strings"
 
@@ -46,6 +47,8 @@ const (
 	InvoiceProviderTaskOpQuery        = "query"
 	InvoiceProviderTaskOpDownload     = "download"
 	InvoiceProviderTaskOpEmailForward = "email_forward"
+
+	InvoiceTopUpAvailableStartTime = int64(1783526400) // 2026-07-09 00:00:00 +08:00
 )
 
 var activeInvoiceStatuses = []string{
@@ -167,13 +170,24 @@ type InvoiceOperationLog struct {
 	CreatedAt     int64  `json:"created_at"`
 }
 
+type InvoiceUserPreference struct {
+	Id           int    `json:"id"`
+	UserId       int    `json:"user_id" gorm:"uniqueIndex"`
+	DefaultEmail string `json:"default_email" gorm:"type:varchar(255)"`
+	CreatedAt    int64  `json:"created_at"`
+	UpdatedAt    int64  `json:"updated_at"`
+}
+
 type InvoiceSubjectResponse struct {
 	Id             int    `json:"id"`
 	UserId         int    `json:"user_id"`
+	Username       string `json:"username"`
 	SubjectType    string `json:"subject_type"`
 	Status         string `json:"status"`
 	RealName       string `json:"real_name"`
 	CompanyName    string `json:"company_name"`
+	IdNo           string `json:"id_no"`
+	TaxNo          string `json:"tax_no"`
 	MaskedIdNo     string `json:"masked_id_no"`
 	MaskedTaxNo    string `json:"masked_tax_no"`
 	CertificateUrl string `json:"certificate_url"`
@@ -182,6 +196,7 @@ type InvoiceSubjectResponse struct {
 	ReviewedBy     int    `json:"reviewed_by"`
 	ReviewedAt     int64  `json:"reviewed_at"`
 	RejectReason   string `json:"reject_reason"`
+	DefaultEmail   string `json:"default_email,omitempty"`
 	CreatedAt      int64  `json:"created_at"`
 	UpdatedAt      int64  `json:"updated_at"`
 }
@@ -222,6 +237,7 @@ type InvoiceApplicationResponse struct {
 	UpdatedAt      int64                     `json:"updated_at"`
 	IssuedAt       int64                     `json:"issued_at"`
 	Subject        *InvoiceSubjectResponse   `json:"subject,omitempty"`
+	SubjectSnapshot map[string]interface{}    `json:"subject_snapshot,omitempty"`
 	Items          []*InvoiceApplicationItem `json:"items,omitempty"`
 }
 
@@ -310,6 +326,8 @@ func (s *InvoiceSubject) Response() *InvoiceSubjectResponse {
 	if s == nil || s.Id == 0 {
 		return nil
 	}
+	idNo := s.idNo()
+	taxNo := s.taxNo()
 	return &InvoiceSubjectResponse{
 		Id:             s.Id,
 		UserId:         s.UserId,
@@ -317,8 +335,10 @@ func (s *InvoiceSubject) Response() *InvoiceSubjectResponse {
 		Status:         s.Status,
 		RealName:       s.RealName,
 		CompanyName:    s.CompanyName,
-		MaskedIdNo:     maskInvoiceSecret(s.idNo(), 3, 4),
-		MaskedTaxNo:    maskInvoiceSecret(s.taxNo(), 4, 4),
+		IdNo:           idNo,
+		TaxNo:          taxNo,
+		MaskedIdNo:     maskInvoiceSecret(idNo, 3, 4),
+		MaskedTaxNo:    maskInvoiceSecret(taxNo, 4, 4),
 		CertificateUrl: s.CertificateUrl,
 		ValidFrom:      s.ValidFrom,
 		ValidUntil:     s.ValidUntil,
@@ -349,6 +369,42 @@ func GetInvoiceSubjectByUserId(userId int) (*InvoiceSubject, error) {
 		return nil, nil
 	}
 	return subject, err
+}
+
+func GetInvoiceDefaultEmail(userId int) string {
+	if userId <= 0 {
+		return ""
+	}
+	preference := &InvoiceUserPreference{}
+	if err := DB.Where("user_id = ?", userId).First(preference).Error; err != nil {
+		return ""
+	}
+	return preference.DefaultEmail
+}
+
+func saveInvoiceDefaultEmail(tx *gorm.DB, userId int, email string) error {
+	email = strings.TrimSpace(email)
+	if userId <= 0 || email == "" {
+		return nil
+	}
+	now := common.GetTimestamp()
+	preference := &InvoiceUserPreference{}
+	err := tx.Where("user_id = ?", userId).First(preference).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return tx.Create(&InvoiceUserPreference{
+			UserId:       userId,
+			DefaultEmail: email,
+			CreatedAt:    now,
+			UpdatedAt:    now,
+		}).Error
+	}
+	if err != nil {
+		return err
+	}
+	return tx.Model(preference).Updates(map[string]interface{}{
+		"default_email": email,
+		"updated_at":    now,
+	}).Error
 }
 
 func SaveInvoiceSubject(userId int, subjectType, realName, companyName, idNo, taxNo, certificateUrl string, validFrom, validUntil int64) (*InvoiceSubject, error) {
@@ -464,7 +520,11 @@ func ListInvoiceSubjects(pageInfo *common.PageInfo, status string, keyword strin
 	}
 	responses := make([]*InvoiceSubjectResponse, 0, len(subjects))
 	for _, subject := range subjects {
-		responses = append(responses, subject.Response())
+		resp := subject.Response()
+		if resp != nil {
+			resp.Username, _ = GetUsernameById(subject.UserId, false)
+		}
+		responses = append(responses, resp)
 	}
 	return responses, total, nil
 }
@@ -478,6 +538,20 @@ func normalizeInvoicePaymentChannel(topUp *TopUp) string {
 		channel = strings.TrimSpace(topUp.PaymentMethod)
 	}
 	return strings.ToLower(channel)
+}
+
+func invoiceQuotaForTopUp(topUp *TopUp) int64 {
+	if topUp == nil {
+		return 0
+	}
+	switch strings.ToLower(strings.TrimSpace(topUp.PaymentMethod)) {
+	case "creem":
+		return topUp.Amount
+	case "stripe":
+		return int64(topUp.Money * common.QuotaPerUnit)
+	default:
+		return int64(float64(topUp.Amount) * common.QuotaPerUnit)
+	}
 }
 
 func invoiceStatusForTopUp(tx *gorm.DB, topUpId int) (string, error) {
@@ -504,7 +578,7 @@ func invoiceAvailableByStatus(status string) bool {
 func ListInvoiceTopUps(userId int, pageInfo *common.PageInfo, keyword string) ([]*InvoiceTopUpResponse, int64, error) {
 	var topUps []*TopUp
 	var total int64
-	query := DB.Model(&TopUp{}).Where("user_id = ? AND status = ? AND money > 0", userId, common.TopUpStatusSuccess)
+	query := DB.Model(&TopUp{}).Where("user_id = ? AND status = ? AND money > 0 AND create_time >= ?", userId, common.TopUpStatusSuccess, InvoiceTopUpAvailableStartTime)
 	if keyword != "" {
 		like := "%" + keyword + "%"
 		query = query.Where("trade_no LIKE ?", like)
@@ -527,7 +601,7 @@ func ListInvoiceTopUps(userId int, pageInfo *common.PageInfo, keyword string) ([
 			Id:               topUp.Id,
 			UserId:           topUp.UserId,
 			Username:         username,
-			Amount:           topUp.Amount,
+			Amount:          invoiceQuotaForTopUp(topUp),
 			Money:            topUp.Money,
 			TradeNo:          topUp.TradeNo,
 			PaymentMethod:    topUp.PaymentMethod,
@@ -691,8 +765,11 @@ func CreateInvoiceApplication(userId int, topUpIds []int, email string, provider
 	}
 	var app *InvoiceApplication
 	err = DB.Transaction(func(tx *gorm.DB) error {
+		if err := saveInvoiceDefaultEmail(tx, userId, email); err != nil {
+			return err
+		}
 		var topUps []*TopUp
-		if err := tx.Where("user_id = ? AND id IN ? AND status = ? AND money > 0", userId, topUpIds, common.TopUpStatusSuccess).Find(&topUps).Error; err != nil {
+		if err := tx.Where("user_id = ? AND id IN ? AND status = ? AND money > 0 AND create_time >= ?", userId, topUpIds, common.TopUpStatusSuccess, InvoiceTopUpAvailableStartTime).Find(&topUps).Error; err != nil {
 			return err
 		}
 		if len(topUps) != len(topUpIds) {
@@ -734,6 +811,8 @@ func CreateInvoiceApplication(userId int, topUpIds []int, email string, provider
 			"subject_type":     subject.SubjectType,
 			"real_name":        subject.RealName,
 			"company_name":     subject.CompanyName,
+			"id_no":            subject.idNo(),
+			"tax_no":           subject.taxNo(),
 			"masked_id_no":     maskInvoiceSecret(subject.idNo(), 3, 4),
 			"masked_tax_no":    maskInvoiceSecret(subject.taxNo(), 4, 4),
 			"certificate_url":  subject.CertificateUrl,
@@ -822,6 +901,12 @@ func buildInvoiceApplicationResponse(app *InvoiceApplication, includeItems bool)
 		UpdatedAt:      app.UpdatedAt,
 		IssuedAt:       app.IssuedAt,
 	}
+	if strings.TrimSpace(app.SubjectSnapshot) != "" {
+		var snapshot map[string]interface{}
+		if err := json.Unmarshal([]byte(app.SubjectSnapshot), &snapshot); err == nil {
+			resp.SubjectSnapshot = snapshot
+		}
+	}
 	var subject InvoiceSubject
 	if err := DB.Where("id = ?", app.SubjectId).First(&subject).Error; err == nil {
 		resp.Subject = subject.Response()
@@ -836,12 +921,22 @@ func buildInvoiceApplicationResponse(app *InvoiceApplication, includeItems bool)
 	return resp, nil
 }
 
-func ListInvoiceApplications(userId int, pageInfo *common.PageInfo) ([]*InvoiceApplicationResponse, int64, error) {
+func ListInvoiceApplications(userId int, pageInfo *common.PageInfo, status string, keyword string, includeItems bool) ([]*InvoiceApplicationResponse, int64, error) {
 	var apps []*InvoiceApplication
 	var total int64
 	query := DB.Model(&InvoiceApplication{})
 	if userId > 0 {
 		query = query.Where("user_id = ?", userId)
+	}
+	if status != "" {
+		query = query.Where("status = ?", status)
+	}
+	if keyword != "" {
+		like := "%" + keyword + "%"
+		query = query.Where(
+			"title LIKE ? OR invoice_no LIKE ? OR email LIKE ? OR EXISTS (SELECT 1 FROM invoice_application_items WHERE invoice_application_items.application_id = invoice_applications.id AND invoice_application_items.trade_no LIKE ?)",
+			like, like, like, like,
+		)
 	}
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
@@ -851,7 +946,7 @@ func ListInvoiceApplications(userId int, pageInfo *common.PageInfo) ([]*InvoiceA
 	}
 	responses := make([]*InvoiceApplicationResponse, 0, len(apps))
 	for _, app := range apps {
-		resp, err := buildInvoiceApplicationResponse(app, false)
+		resp, err := buildInvoiceApplicationResponse(app, includeItems)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -920,6 +1015,40 @@ func RequestInvoiceEmailForward(userId int, id int, email string) error {
 	})
 }
 
+func sendInvoiceIssuedEmail(app *InvoiceApplication, invoiceFileUrl string) error {
+	if app == nil {
+		return nil
+	}
+	email := strings.TrimSpace(app.Email)
+	invoiceFileUrl = strings.TrimSpace(invoiceFileUrl)
+	if email == "" || invoiceFileUrl == "" {
+		return nil
+	}
+	title := strings.TrimSpace(app.Title)
+	if title == "" {
+		title = "增值税普通发票"
+	}
+	invoiceNo := strings.TrimSpace(app.InvoiceNo)
+	if invoiceNo == "" {
+		invoiceNo = "-"
+	}
+	content := fmt.Sprintf(
+		`<p>您好，您的发票已开具。</p>
+<p>发票抬头：%s</p>
+<p>发票号：%s</p>
+<p>发票金额：¥%.2f</p>
+<p><a href="%s" target="_blank" rel="noopener noreferrer">点击下载发票</a></p>
+<p>如链接无法打开，请复制以下地址到浏览器访问：</p>
+<p>%s</p>`,
+		html.EscapeString(title),
+		html.EscapeString(invoiceNo),
+		app.Amount,
+		html.EscapeString(invoiceFileUrl),
+		html.EscapeString(invoiceFileUrl),
+	)
+	return common.SendEmail("发票已开具", email, content)
+}
+
 func UpdateInvoiceApplicationByAdmin(id int, adminId int, status string, invoiceNo string, invoiceFileUrl string, fileType string, rejectReason string) error {
 	allowed := map[string]bool{
 		InvoiceApplicationStatusPending:    true,
@@ -934,7 +1063,9 @@ func UpdateInvoiceApplicationByAdmin(id int, adminId int, status string, invoice
 		return errors.New("开票状态错误")
 	}
 	now := common.GetTimestamp()
-	return DB.Transaction(func(tx *gorm.DB) error {
+	var issuedApp *InvoiceApplication
+	issuedFileUrl := strings.TrimSpace(invoiceFileUrl)
+	err := DB.Transaction(func(tx *gorm.DB) error {
 		app := &InvoiceApplication{}
 		if err := tx.Where("id = ?", id).First(app).Error; err != nil {
 			return err
@@ -947,6 +1078,17 @@ func UpdateInvoiceApplicationByAdmin(id int, adminId int, status string, invoice
 		}
 		if status == InvoiceApplicationStatusIssued {
 			updates["issued_at"] = now
+			if issuedFileUrl == "" {
+				issuedFileUrl = strings.TrimSpace(app.InvoiceFileUrl)
+			}
+			if issuedFileUrl == "" {
+				return errors.New("已开票状态需要填写发票文件链接")
+			}
+			app.Status = status
+			app.InvoiceNo = strings.TrimSpace(invoiceNo)
+			app.InvoiceFileUrl = issuedFileUrl
+			app.IssuedAt = now
+			issuedApp = app
 		}
 		if status == InvoiceApplicationStatusRedIssued {
 			updates["red_issued_at"] = now
@@ -981,6 +1123,33 @@ func UpdateInvoiceApplicationByAdmin(id int, adminId int, status string, invoice
 			CreatedAt:     now,
 		}).Error
 	})
+	if err != nil {
+		return err
+	}
+	if issuedApp != nil && issuedFileUrl != "" && strings.TrimSpace(issuedApp.Email) != "" {
+		if err := sendInvoiceIssuedEmail(issuedApp, issuedFileUrl); err != nil {
+			_ = DB.Create(&InvoiceOperationLog{
+				ApplicationId: issuedApp.Id,
+				SubjectId:     issuedApp.SubjectId,
+				UserId:        issuedApp.UserId,
+				OperatorId:    adminId,
+				Operation:     "email_auto_failed",
+				Content:       invoiceJSON(map[string]any{"email": issuedApp.Email, "error": err.Error()}),
+				CreatedAt:     common.GetTimestamp(),
+			}).Error
+			return fmt.Errorf("开票状态已更新，但发票邮件发送失败：%w", err)
+		}
+		_ = DB.Create(&InvoiceOperationLog{
+			ApplicationId: issuedApp.Id,
+			SubjectId:     issuedApp.SubjectId,
+			UserId:        issuedApp.UserId,
+			OperatorId:    adminId,
+			Operation:     "email_auto_sent",
+			Content:       invoiceJSON(map[string]any{"email": issuedApp.Email}),
+			CreatedAt:     common.GetTimestamp(),
+		}).Error
+	}
+	return nil
 }
 
 func ListInvoiceProviderConfigs() ([]*InvoiceProviderConfig, error) {

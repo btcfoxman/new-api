@@ -26,8 +26,9 @@ type invoiceApplyRequest struct {
 }
 
 type invoiceSubjectReviewRequest struct {
-	Status string `json:"status"`
-	Reason string `json:"reason"`
+	Status       string `json:"status"`
+	Reason       string `json:"reason"`
+	RejectReason string `json:"reject_reason"`
 }
 
 type invoiceAdminUpdateRequest struct {
@@ -51,6 +52,22 @@ func parseInvoiceId(c *gin.Context) (int, bool) {
 	return id, true
 }
 
+func invoiceTargetUserId(c *gin.Context) int {
+	userId := c.GetInt("id")
+	if c.GetInt("role") < common.RoleAdminUser {
+		return userId
+	}
+	raw := c.Query("user_id")
+	if raw == "" {
+		return userId
+	}
+	targetUserId, err := strconv.Atoi(raw)
+	if err != nil || targetUserId <= 0 {
+		return userId
+	}
+	return targetUserId
+}
+
 func GetInvoiceSubject(c *gin.Context) {
 	userId := c.GetInt("id")
 	subject, err := model.GetInvoiceSubjectByUserId(userId)
@@ -62,7 +79,9 @@ func GetInvoiceSubject(c *gin.Context) {
 		common.ApiSuccess(c, nil)
 		return
 	}
-	common.ApiSuccess(c, subject.Response())
+	resp := subject.Response()
+	resp.DefaultEmail = model.GetInvoiceDefaultEmail(userId)
+	common.ApiSuccess(c, resp)
 }
 
 func SaveInvoiceSubject(c *gin.Context) {
@@ -91,7 +110,7 @@ func SaveInvoiceSubject(c *gin.Context) {
 }
 
 func ListInvoiceTopUps(c *gin.Context) {
-	userId := c.GetInt("id")
+	userId := invoiceTargetUserId(c)
 	pageInfo := common.GetPageQuery(c)
 	items, total, err := model.ListInvoiceTopUps(userId, pageInfo, c.Query("keyword"))
 	if err != nil {
@@ -119,9 +138,9 @@ func ApplyInvoice(c *gin.Context) {
 }
 
 func ListUserInvoices(c *gin.Context) {
-	userId := c.GetInt("id")
+	userId := invoiceTargetUserId(c)
 	pageInfo := common.GetPageQuery(c)
-	items, total, err := model.ListInvoiceApplications(userId, pageInfo)
+	items, total, err := model.ListInvoiceApplications(userId, pageInfo, c.Query("status"), c.Query("keyword"), false)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -184,7 +203,11 @@ func AdminReviewInvoiceSubject(c *gin.Context) {
 		common.ApiErrorMsg(c, "参数错误")
 		return
 	}
-	if err := model.ReviewInvoiceSubject(id, req.Status, req.Reason, c.GetInt("id")); err != nil {
+	reason := req.Reason
+	if reason == "" {
+		reason = req.RejectReason
+	}
+	if err := model.ReviewInvoiceSubject(id, req.Status, reason, c.GetInt("id")); err != nil {
 		common.ApiError(c, err)
 		return
 	}
@@ -193,7 +216,13 @@ func AdminReviewInvoiceSubject(c *gin.Context) {
 
 func AdminListInvoices(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
-	items, total, err := model.ListInvoiceApplications(0, pageInfo)
+	userId := 0
+	if raw := c.Query("user_id"); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+			userId = parsed
+		}
+	}
+	items, total, err := model.ListInvoiceApplications(userId, pageInfo, c.Query("status"), c.Query("keyword"), true)
 	if err != nil {
 		common.ApiError(c, err)
 		return
