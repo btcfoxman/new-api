@@ -97,6 +97,7 @@ func InitOptionMap() {
 	common.OptionMap["ExtPayQueryEnabled"] = strconv.FormatBool(setting.ExtPayQueryEnabled)
 	common.OptionMap["ExtPayQueryIntervalSeconds"] = strconv.Itoa(setting.ExtPayQueryIntervalSeconds)
 	common.OptionMap["ExtPayQueryTimeoutSeconds"] = strconv.Itoa(setting.ExtPayQueryTimeoutSeconds)
+	common.OptionMap["ExtPayPendingExpireSeconds"] = strconv.Itoa(setting.ExtPayPendingExpireSeconds)
 	common.OptionMap["CreemApiKey"] = setting.CreemApiKey
 	common.OptionMap["CreemProducts"] = setting.CreemProducts
 	common.OptionMap["CreemTestMode"] = strconv.FormatBool(setting.CreemTestMode)
@@ -402,6 +403,8 @@ func updateOptionMap(key string, value string) (err error) {
 		setting.ExtPayQueryIntervalSeconds, _ = strconv.Atoi(value)
 	case "ExtPayQueryTimeoutSeconds":
 		setting.ExtPayQueryTimeoutSeconds, _ = strconv.Atoi(value)
+	case "ExtPayPendingExpireSeconds":
+		setting.ExtPayPendingExpireSeconds, _ = strconv.Atoi(value)
 	case "CreemApiKey":
 		setting.CreemApiKey = value
 	case "CreemProducts":

@@ -10,3 +10,4 @@ var ExtPayMinTopUp = 0
 var ExtPayQueryEnabled = true
 var ExtPayQueryIntervalSeconds = 30
 var ExtPayQueryTimeoutSeconds = 10
+var ExtPayPendingExpireSeconds = 7200

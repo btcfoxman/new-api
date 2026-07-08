@@ -116,6 +116,13 @@ func GetTopUpDetail(c *gin.Context) {
 
 	if topUp.PaymentMethod == service.ExtPayMethodType &&
 		topUp.Status == common.TopUpStatusPending &&
+		service.IsExtPayTopUpExpired(topUp) {
+		_ = model.MarkExtPayTopUpState(topUp.TradeNo, common.TopUpStatusExpired, topUp.ExternalOrderNo, topUp.PaymentExtra)
+		topUp = model.GetUserTopUpByTradeNo(userID, orderNo)
+	}
+
+	if topUp.PaymentMethod == service.ExtPayMethodType &&
+		topUp.Status == common.TopUpStatusPending &&
 		service.ExtPayAvailable() &&
 		service.ExtPayQueryEnabled() &&
 		(common.GetTimestamp()-topUp.LastQueryTime >= int64(getExtPayQueryInterval()) || topUp.LastQueryTime == 0) {

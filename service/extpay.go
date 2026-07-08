@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -145,6 +146,9 @@ func CreateExtPayOrder(topUp *model.TopUp) (*ExtPayCreateOrderResponse, error) {
 		Timestamp:  timestamp,
 		Nonce:      nonce,
 	}
+	if err := validateExtPayCallbackURL(req.NotifyURL, "notifyUrl"); err != nil {
+		return nil, err
+	}
 	req.Sign = signExtPayPayload(extPayStringSetting("ExtPaySecret", setting.ExtPaySecret), map[string]any{
 		"amount":     req.Amount,
 		"appId":      req.AppID,
@@ -225,14 +229,14 @@ func QueryExtPayOrder(topUp *model.TopUp) (*ExtPayQueryOrderResponse, error) {
 
 func VerifyExtPayNotify(payload *ExtPayNotifyPayload) error {
 	if payload.AppID != extPayStringSetting("ExtPayAppId", setting.ExtPayAppId) {
-		return fmt.Errorf("非法 appId")
+		return fmt.Errorf("invalid appId")
 	}
 	if payload.Timestamp <= 0 {
-		return fmt.Errorf("timestamp 无效")
+		return fmt.Errorf("invalid timestamp")
 	}
 	now := time.Now().Unix()
 	if now-payload.Timestamp > 300 || payload.Timestamp-now > 300 {
-		return fmt.Errorf("回调已过期")
+		return fmt.Errorf("callback expired")
 	}
 	expected := signExtPayPayload(extPayStringSetting("ExtPaySecret", setting.ExtPaySecret), map[string]any{
 		"amount":          payload.Amount,
@@ -248,7 +252,7 @@ func VerifyExtPayNotify(payload *ExtPayNotifyPayload) error {
 		"uid":             payload.UID,
 	})
 	if !strings.EqualFold(expected, payload.Sign) {
-		return fmt.Errorf("签名校验失败")
+		return fmt.Errorf("signature verification failed")
 	}
 	if err := registerExtPayNotifyNonce(payload.AppID, payload.Nonce, extPayNotifyTTL); err != nil {
 		return err
@@ -257,6 +261,9 @@ func VerifyExtPayNotify(payload *ExtPayNotifyPayload) error {
 }
 
 func SyncTopUpWithExtPay(topUp *model.TopUp) error {
+	if IsExtPayTopUpExpired(topUp) {
+		return model.MarkExtPayTopUpState(topUp.TradeNo, common.TopUpStatusExpired, topUp.ExternalOrderNo, topUp.PaymentExtra)
+	}
 	resp, err := QueryExtPayOrder(topUp)
 	raw, _ := json.Marshal(resp)
 	if resp == nil {
@@ -293,10 +300,27 @@ func SyncPendingExtPayOrders(limit int) {
 		return
 	}
 	for _, topUp := range topUps {
+		if IsExtPayTopUpExpired(topUp) {
+			if err := model.MarkExtPayTopUpState(topUp.TradeNo, common.TopUpStatusExpired, topUp.ExternalOrderNo, topUp.PaymentExtra); err != nil {
+				common.SysError(fmt.Sprintf("failed to expire extpay order %s: %v", topUp.TradeNo, err))
+			}
+			continue
+		}
 		if err := SyncTopUpWithExtPay(topUp); err != nil {
 			common.SysError(fmt.Sprintf("failed to sync extpay order %s: %v", topUp.TradeNo, err))
 		}
 	}
+}
+
+func IsExtPayTopUpExpired(topUp *model.TopUp) bool {
+	if topUp == nil || topUp.Status != common.TopUpStatusPending {
+		return false
+	}
+	expireSeconds := ExtPayPendingExpireSeconds()
+	if expireSeconds <= 0 || topUp.CreateTime <= 0 {
+		return false
+	}
+	return common.GetTimestamp()-topUp.CreateTime >= int64(expireSeconds)
 }
 
 func extPayJSONRequest(method string, path string, payload any) ([]byte, error) {
@@ -399,7 +423,7 @@ func signExtPayPayload(secret string, payload map[string]any) string {
 
 func parseExtPayAmount(amount string) (decimal.Decimal, error) {
 	if amount == "" {
-		return decimal.Zero, fmt.Errorf("amount 为空")
+		return decimal.Zero, fmt.Errorf("amount is empty")
 	}
 	return decimal.NewFromString(amount)
 }
@@ -413,23 +437,45 @@ func buildExtPaySubject(topUp *model.TopUp) string {
 }
 
 func getExtPayNotifyURL() string {
-	value := extPayStringSetting("ExtPayNotifyURL", setting.ExtPayNotifyURL)
+	if value := strings.TrimSpace(os.Getenv("EXTPAY_NOTIFY_URL")); value != "" {
+		return value
+	}
+	value := strings.TrimSpace(extPayStringSetting("ExtPayNotifyURL", setting.ExtPayNotifyURL))
 	if value != "" {
 		return value
 	}
 	return strings.TrimRight(GetCallbackAddress(), "/") + "/api/ext-pay/notify"
 }
 
+func validateExtPayCallbackURL(callbackURL string, field string) error {
+	parsed, err := url.Parse(strings.TrimSpace(callbackURL))
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return fmt.Errorf("extpay %s invalid: %s", field, callbackURL)
+	}
+	scheme := strings.ToLower(parsed.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return fmt.Errorf("extpay %s must use http or https: %s", field, callbackURL)
+	}
+	host := strings.ToLower(parsed.Hostname())
+	if host == "" || host == "localhost" || host == "127.0.0.1" || host == "::1" {
+		return fmt.Errorf("extpay %s is not externally reachable: %s", field, callbackURL)
+	}
+	return nil
+}
+
 func getExtPayReturnURL(orderNo string) string {
-	base := extPayStringSetting("ExtPayReturnURL", setting.ExtPayReturnURL)
+	base := strings.TrimSpace(os.Getenv("EXTPAY_RETURN_URL"))
 	if base == "" {
-		base = strings.TrimRight(system_setting.ServerAddress, "/") + "/api/ext-pay/return"
+		base = extPayStringSetting("ExtPayReturnURL", setting.ExtPayReturnURL)
+	}
+	if base == "" {
+		base = strings.TrimRight(system_setting.ServerAddress, "/") + "/console/topup?show_history=true"
 	}
 	separator := "?"
 	if strings.Contains(base, "?") {
 		separator = "&"
 	}
-	return base + separator + "order_no=" + orderNo
+	return base + separator + "order_no=" + url.QueryEscape(orderNo)
 }
 
 func maxInt(value int, fallback int) int {
@@ -445,6 +491,10 @@ func ExtPayQueryEnabled() bool {
 
 func ExtPayQueryIntervalSeconds() int {
 	return extPayIntSetting("ExtPayQueryIntervalSeconds", setting.ExtPayQueryIntervalSeconds)
+}
+
+func ExtPayPendingExpireSeconds() int {
+	return maxInt(extPayIntSetting("ExtPayPendingExpireSeconds", setting.ExtPayPendingExpireSeconds), 7200)
 }
 
 func extPayStringSetting(key string, current string) string {
@@ -481,7 +531,7 @@ func extPayIntSetting(key string, current int) int {
 
 func registerExtPayNotifyNonce(appID string, nonce string, ttl time.Duration) error {
 	if strings.TrimSpace(appID) == "" || strings.TrimSpace(nonce) == "" {
-		return fmt.Errorf("nonce 无效")
+		return fmt.Errorf("invalid nonce")
 	}
 	key := "extpay:notify:nonce:" + appID + ":" + nonce
 	if common.RedisEnabled && common.RDB != nil {
@@ -490,11 +540,11 @@ func registerExtPayNotifyNonce(appID string, nonce string, ttl time.Duration) er
 			return err
 		}
 		if !ok {
-			return fmt.Errorf("重复回调")
+			return fmt.Errorf("duplicate callback")
 		}
 		return nil
 	}
-	return registerLocalExtPayTTL(key, ttl, "重复回调")
+	return registerLocalExtPayTTL(key, ttl, "duplicate callback")
 }
 
 func acquireExtPayQueryTaskLock() (bool, error) {
