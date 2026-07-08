@@ -30,6 +30,7 @@ import {
   getQuotaPerUnit,
   isAdmin,
   isRoot,
+  getUserIdFromLocalStorage,
 } from '../../helpers';
 import { Modal, Toast } from '@douyinfe/semi-ui';
 import { useTranslation } from 'react-i18next';
@@ -43,6 +44,12 @@ import TransferModal from './modals/TransferModal';
 import PaymentConfirmModal from './modals/PaymentConfirmModal';
 import TopupHistoryModal from './modals/TopupHistoryModal';
 import InvoiceWalletCard from './InvoiceWalletCard';
+
+const parseInvoiceVisibleUserIds = (value) =>
+  String(value || '')
+    .split(/[\s,，;；]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
 
 const TopUp = () => {
   const { t } = useTranslation();
@@ -749,6 +756,15 @@ const TopUp = () => {
     setSelectedCreemProduct(null);
   };
 
+  const invoiceVisibleUserIds = statusState?.status?.invoice_visible_user_ids || '';
+  const currentUserId = userState?.user?.id || getUserIdFromLocalStorage();
+  const invoiceVisibleIds = parseInvoiceVisibleUserIds(invoiceVisibleUserIds);
+  const showInvoiceWalletCard =
+    isAdmin() ||
+    isRoot() ||
+    (!!statusState?.status?.invoice_enabled &&
+      (invoiceVisibleIds.length === 0 || invoiceVisibleIds.includes(String(currentUserId))));
+
   // 选择预设充值额度
   const selectPresetAmount = (preset) => {
     setTopUpCount(preset.value);
@@ -898,12 +914,13 @@ const TopUp = () => {
           handleAffLinkClick={handleAffLinkClick}
         />
       </div>
-      {(statusState?.status?.invoice_enabled || isAdmin() || isRoot()) && (
+      {showInvoiceWalletCard && (
         <div className='mt-6'>
           <InvoiceWalletCard
             t={t}
             renderQuota={renderQuota}
             invoiceEnabled={!!statusState?.status?.invoice_enabled}
+            invoiceVisibleUserIds={invoiceVisibleUserIds}
           />
         </div>
       )}

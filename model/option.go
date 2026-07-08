@@ -53,6 +53,7 @@ func InitOptionMap() {
 	common.OptionMap["TaskEnabled"] = strconv.FormatBool(common.TaskEnabled)
 	common.OptionMap["DataExportEnabled"] = strconv.FormatBool(common.DataExportEnabled)
 	common.OptionMap["InvoiceEnabled"] = strconv.FormatBool(common.InvoiceEnabled)
+	common.OptionMap["InvoiceVisibleUserIds"] = common.InvoiceVisibleUserIds
 	common.OptionMap["ChannelDisableThreshold"] = strconv.FormatFloat(common.ChannelDisableThreshold, 'f', -1, 64)
 	common.OptionMap["EmailDomainRestrictionEnabled"] = strconv.FormatBool(common.EmailDomainRestrictionEnabled)
 	common.OptionMap["EmailAliasRestrictionEnabled"] = strconv.FormatBool(common.EmailAliasRestrictionEnabled)
@@ -340,6 +341,8 @@ func updateOptionMap(key string, value string) (err error) {
 	switch key {
 	case "EmailDomainWhitelist":
 		common.EmailDomainWhitelist = strings.Split(value, ",")
+	case "InvoiceVisibleUserIds":
+		common.InvoiceVisibleUserIds = value
 	case "SMTPServer":
 		common.SMTPServer = value
 	case "SMTPPort":

@@ -50,12 +50,15 @@ const pageQuery = (page, pageSize, extras = {}) => {
 };
 const textOfSubject = (record) => (record?.subject_type === 'company' ? record?.company_name : record?.real_name) || '-';
 const docOfSubject = (record) => (record?.subject_type === 'company' ? (record?.tax_no || record?.masked_tax_no) : (record?.id_no || record?.masked_id_no)) || '-';
+const taxNoOfSubject = (record) => (record?.subject_type === 'company' ? (record?.tax_no || record?.masked_tax_no) : '') || '-';
 
-const InvoiceWalletCard = ({ t, renderQuota, invoiceEnabled = false }) => {
+const InvoiceWalletCard = ({ t, renderQuota, invoiceEnabled = false, invoiceVisibleUserIds = '' }) => {
   const adminUser = isAdmin();
   const rootUser = isRoot();
   const [featureEnabled, setFeatureEnabled] = useState(!!invoiceEnabled);
+  const [visibleUserIds, setVisibleUserIds] = useState(invoiceVisibleUserIds || '');
   const featureVisible = featureEnabled || adminUser || rootUser;
+  const [visibleUserIdsSaving, setVisibleUserIdsSaving] = useState(false);
 
   const [activeKey, setActiveKey] = useState('topups');
   const [subject, setSubject] = useState(null);
@@ -114,14 +117,15 @@ const InvoiceWalletCard = ({ t, renderQuota, invoiceEnabled = false }) => {
   const subjectVerified = subject?.status === 'verified';
   const invoiceAmount = useMemo(() => applyRows.reduce((sum, item) => sum + Number(item.money || 0), 0), [applyRows]);
   const targetUserQuery = () => (adminUser && String(invoiceTargetUserId || '').trim() ? { user_id: String(invoiceTargetUserId).trim() } : {});
-  const viewingOtherUserInvoices = adminUser && String(invoiceTargetUserId || '').trim() !== '';
 
   useEffect(() => setFeatureEnabled(!!invoiceEnabled), [invoiceEnabled]);
+  useEffect(() => setVisibleUserIds(invoiceVisibleUserIds || ''), [invoiceVisibleUserIds]);
 
   const loadSubject = async () => {
     setSubjectLoading(true);
     try {
-      const res = await API.get('/api/user/invoices/subject');
+      const query = new URLSearchParams(targetUserQuery()).toString();
+      const res = await API.get(`/api/user/invoices/subject${query ? `?${query}` : ''}`);
       if (res.data?.success) setSubject(res.data.data || null);
       else showError(res.data?.message || '加载认证信息失败');
     } catch (e) {
@@ -213,7 +217,7 @@ const InvoiceWalletCard = ({ t, renderQuota, invoiceEnabled = false }) => {
   useEffect(() => {
     if (!featureVisible) return;
     loadSubject();
-  }, [featureVisible]);
+  }, [featureVisible, invoiceTargetUserId]);
   useEffect(() => {
     if (!featureVisible) return;
     if (activeKey === 'topups') loadTopups(topupsPage, topupsPageSize);
@@ -257,6 +261,18 @@ const InvoiceWalletCard = ({ t, renderQuota, invoiceEnabled = false }) => {
       showError('更新发票功能开关失败');
     } finally {
       setFeatureSwitchLoading(false);
+    }
+  };
+  const saveVisibleUserIds = async () => {
+    setVisibleUserIdsSaving(true);
+    try {
+      const res = await API.put('/api/option/', { key: 'InvoiceVisibleUserIds', value: visibleUserIds || '' });
+      if (res.data?.success) showSuccess('发票可见用户已保存');
+      else showError(res.data?.message || '保存发票可见用户失败');
+    } catch (e) {
+      showError('保存发票可见用户失败');
+    } finally {
+      setVisibleUserIdsSaving(false);
     }
   };
   const openSubjectModal = () => {
@@ -304,7 +320,7 @@ const InvoiceWalletCard = ({ t, renderQuota, invoiceEnabled = false }) => {
   const submitApply = async () => {
     setApplySubmitting(true);
     try {
-      const res = await API.post('/api/user/invoices/apply', { topup_ids: applyRows.map((item) => item.id), email: applyEmail });
+      const res = await API.post('/api/user/invoices/apply', { topup_ids: applyRows.map((item) => item.id), email: applyEmail, ...targetUserQuery() });
       if (res.data?.success) {
         showSuccess('开票申请已提交');
         setSubject((prev) => (prev ? { ...prev, default_email: applyEmail } : prev));
@@ -390,7 +406,7 @@ const InvoiceWalletCard = ({ t, renderQuota, invoiceEnabled = false }) => {
     { title: '支付方式', dataIndex: 'payment_method', width: 110, render: (value, record) => PAYMENT_METHOD_MAP[record.payment_channel] || PAYMENT_METHOD_MAP[value] || record.payment_channel || value || '-' },
     { title: '订单号', dataIndex: 'trade_no', render: (value) => <Text copyable={{ content: value }}>{value}</Text> },
     { title: '状态', dataIndex: 'status', width: 120, render: (_, record) => (record.invoice_status ? renderTag(INVOICE_STATUS, record.invoice_status) : <Tag color='green'>可开票</Tag>) },
-    { title: '操作', width: 110, render: (_, record) => <Button size='small' type='primary' theme='outline' disabled={!record.invoice_available || !subjectVerified || viewingOtherUserInvoices} onClick={() => openApplyModal([record])}>申请开票</Button> },
+    { title: '操作', width: 110, render: (_, record) => <Button size='small' type='primary' theme='outline' disabled={!record.invoice_available || !subjectVerified} onClick={() => openApplyModal([record])}>申请开票</Button> },
   ];
   const invoiceColumns = [
     { title: '申请ID', dataIndex: 'id', width: 90 },
@@ -407,6 +423,7 @@ const InvoiceWalletCard = ({ t, renderQuota, invoiceEnabled = false }) => {
     { title: '用户名', dataIndex: 'username', width: 120 },
     { title: '类型', dataIndex: 'subject_type', width: 90, render: (value) => SUBJECT_LABELS[value] || value },
     { title: '主体', dataIndex: 'company_name', render: (_, record) => textOfSubject(record) },
+    { title: '纳税号', dataIndex: 'tax_no', width: 180, render: (_, record) => taxNoOfSubject(record) },
     { title: '证件', dataIndex: 'masked_tax_no', render: (_, record) => docOfSubject(record) },
     { title: '有效期', dataIndex: 'valid_until', width: 170, render: (value) => formatValidUntil(value) },
     { title: '状态', dataIndex: 'status', width: 110, render: (value) => renderTag(SUBJECT_STATUS, value) },
@@ -448,6 +465,20 @@ const InvoiceWalletCard = ({ t, renderQuota, invoiceEnabled = false }) => {
       title={<div className='flex items-center gap-2'><FileText size={18} /><span>{t ? t('发票管理') : '发票管理'}</span>{!featureEnabled ? <Tag color='grey'>前端已关闭</Tag> : null}</div>}
       headerExtraContent={<Space>{rootUser ? <Space><span className='text-xs text-[var(--semi-color-text-1)]'>前端显示</span><Switch size='small' checked={featureEnabled} loading={featureSwitchLoading} onChange={(checked) => toggleFeatureEnabled(Boolean(checked))} /></Space> : null}<Button size='small' theme='borderless' loading={subjectLoading || topupsLoading || invoicesLoading || adminSubjectsLoading || adminInvoicesLoading || providersLoading} onClick={refreshActive}>刷新</Button></Space>}
     >
+      {rootUser ? (
+        <div className='mb-4 rounded-xl border border-[var(--semi-color-border)] p-3 bg-[var(--semi-color-fill-0)]'>
+          <div className='mb-2 text-sm font-medium'>前端可见用户 ID</div>
+          <Space align='start' wrap>
+            <textarea
+              className='min-h-[72px] w-[420px] max-w-full rounded-md border border-[var(--semi-color-border)] bg-[var(--semi-color-bg-0)] p-3 text-sm'
+              placeholder='留空表示所有用户可见；多个用户 ID 可用逗号、空格或换行分隔'
+              value={visibleUserIds}
+              onChange={(e) => setVisibleUserIds(e.target.value)}
+            />
+            <Button type='primary' theme='outline' loading={visibleUserIdsSaving} onClick={saveVisibleUserIds}>保存可见用户</Button>
+          </Space>
+        </div>
+      ) : null}
       <div className='mb-4 rounded-xl border border-dashed border-[var(--semi-color-border)] p-4 bg-[var(--semi-color-fill-0)]'>
         <div className='flex flex-col md:flex-row md:items-center md:justify-between gap-3'>
           <div className='flex items-start gap-3'>
@@ -470,9 +501,9 @@ const InvoiceWalletCard = ({ t, renderQuota, invoiceEnabled = false }) => {
               <Input prefix={<IconSearch />} showClear placeholder='搜索订单号' value={topupsKeyword} onChange={setTopupsKeyword} className='md:max-w-sm' />
               {adminUser ? <Input showClear placeholder='用户ID，留空为自己' value={invoiceTargetUserId} onChange={setInvoiceTargetUserId} style={{ width: 180 }} /> : null}
             </Space>
-            <Button type='primary' disabled={!subjectVerified || selectedRows.length === 0 || viewingOtherUserInvoices} onClick={() => openApplyModal(selectedRows)}>批量申请开票</Button>
+            <Button type='primary' disabled={!subjectVerified || selectedRows.length === 0} onClick={() => openApplyModal(selectedRows)}>批量申请开票</Button>
           </div>
-          <Table rowKey='id' size='small' columns={topupColumns} dataSource={topups} loading={topupsLoading} rowSelection={{ selectedRowKeys, onChange: (keys, rows) => { setSelectedRowKeys(keys); setSelectedRows(rows.filter((row) => row.invoice_available)); }, getCheckboxProps: (record) => ({ disabled: viewingOtherUserInvoices || !record.invoice_available }) }} pagination={{ currentPage: topupsPage, pageSize: topupsPageSize, total: topupsTotal, showSizeChanger: true, onPageChange: setTopupsPage, onPageSizeChange: (size) => { setTopupsPageSize(size); setTopupsPage(1); } }} empty={<Empty description='暂无可展示充值记录' />} />
+          <Table rowKey='id' size='small' columns={topupColumns} dataSource={topups} loading={topupsLoading} rowSelection={{ selectedRowKeys, onChange: (keys, rows) => { setSelectedRowKeys(keys); setSelectedRows(rows.filter((row) => row.invoice_available)); }, getCheckboxProps: (record) => ({ disabled: !record.invoice_available }) }} pagination={{ currentPage: topupsPage, pageSize: topupsPageSize, total: topupsTotal, showSizeChanger: true, onPageChange: setTopupsPage, onPageSizeChange: (size) => { setTopupsPageSize(size); setTopupsPage(1); } }} empty={<Empty description='暂无可展示充值记录' />} />
         </Tabs.TabPane>
         <Tabs.TabPane tab='开票记录' itemKey='invoices'>
           {adminUser ? <div className='mb-3 flex flex-col md:flex-row gap-3 md:items-center'><Input showClear placeholder='用户ID，留空为自己' value={invoiceTargetUserId} onChange={setInvoiceTargetUserId} style={{ width: 180 }} /></div> : null}
@@ -530,6 +561,7 @@ const InvoiceWalletCard = ({ t, renderQuota, invoiceEnabled = false }) => {
             <div>发票金额：{formatMoney(currentInvoiceRecord.amount)}</div>
             <div>发票抬头：{textOfSubject(currentInvoiceSubject)}</div>
             <div>主体类型：{SUBJECT_LABELS[currentInvoiceSubject?.subject_type] || '-'}</div>
+            <div className='md:col-span-2'>纳税号：{taxNoOfSubject(currentInvoiceSubject)}</div>
             <div className='md:col-span-2'>认证证件：{docOfSubject(currentInvoiceSubject)}</div>
             <div className='md:col-span-2'>接收邮箱：{currentInvoiceRecord.email || '-'}</div>
             <div className='md:col-span-2'>订单号：{currentInvoiceTradeNos || '-'}</div>

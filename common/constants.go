@@ -27,6 +27,7 @@ var DrawingEnabled = true
 var TaskEnabled = true
 var DataExportEnabled = true
 var InvoiceEnabled = false
+var InvoiceVisibleUserIds = ""
 var DataExportInterval = 5         // unit: minute
 var DataExportDefaultTime = "hour" // unit: minute
 var DefaultCollapseSidebar = false // default value of collapse sidebar

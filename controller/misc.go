@@ -82,6 +82,7 @@ func GetStatus(c *gin.Context) {
 		"enable_task":                   common.TaskEnabled,
 		"enable_data_export":            common.DataExportEnabled,
 		"invoice_enabled":               common.InvoiceEnabled,
+		"invoice_visible_user_ids":      common.InvoiceVisibleUserIds,
 		"data_export_default_time":      common.DataExportDefaultTime,
 		"default_collapse_sidebar":      common.DefaultCollapseSidebar,
 		"mj_notify_enabled":             setting.MjNotifyEnabled,

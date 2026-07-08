@@ -23,6 +23,7 @@ type invoiceApplyRequest struct {
 	TopUpIds []int  `json:"topup_ids"`
 	Email    string `json:"email"`
 	Provider string `json:"provider"`
+	UserId   int    `json:"user_id"`
 }
 
 type invoiceSubjectReviewRequest struct {
@@ -69,7 +70,7 @@ func invoiceTargetUserId(c *gin.Context) int {
 }
 
 func GetInvoiceSubject(c *gin.Context) {
-	userId := c.GetInt("id")
+	userId := invoiceTargetUserId(c)
 	subject, err := model.GetInvoiceSubjectByUserId(userId)
 	if err != nil {
 		common.ApiError(c, err)
@@ -128,6 +129,9 @@ func ApplyInvoice(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		common.ApiErrorMsg(c, "参数错误")
 		return
+	}
+	if c.GetInt("role") >= common.RoleAdminUser && req.UserId > 0 {
+		userId = req.UserId
 	}
 	app, err := model.CreateInvoiceApplication(userId, req.TopUpIds, req.Email, req.Provider)
 	if err != nil {
