@@ -95,6 +95,7 @@ func CompleteExtPayTopUp(tradeNo string, externalOrderNo string, uid string, amo
 	var userId int
 	var quotaToAdd int
 	var payMoney float64
+	var completed bool
 
 	err := DB.Transaction(func(tx *gorm.DB) error {
 		topUp := &TopUp{}
@@ -147,11 +148,16 @@ func CompleteExtPayTopUp(tradeNo string, externalOrderNo string, uid string, amo
 
 		userId = topUp.UserId
 		payMoney = topUp.Money
+		completed = true
 		return nil
 	})
 
 	if err != nil {
 		return err
+	}
+
+	if !completed {
+		return nil
 	}
 
 	RecordLog(userId, LogTypeTopup, fmt.Sprintf("ExtPay充值成功，充值额度: %v，支付金额：%.2f", logger.FormatQuota(quotaToAdd), payMoney))
