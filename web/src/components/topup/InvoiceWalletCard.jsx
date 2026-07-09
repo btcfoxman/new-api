@@ -116,7 +116,10 @@ const InvoiceWalletCard = ({ t, renderQuota, invoiceEnabled = false, invoiceVisi
 
   const subjectVerified = subject?.status === 'verified';
   const invoiceAmount = useMemo(() => applyRows.reduce((sum, item) => sum + Number(item.money || 0), 0), [applyRows]);
-  const targetUserQuery = () => (adminUser && String(invoiceTargetUserId || '').trim() ? { user_id: String(invoiceTargetUserId).trim() } : {});
+  const targetUserQuery = () => {
+    const userId = Number(String(invoiceTargetUserId || '').trim());
+    return adminUser && Number.isInteger(userId) && userId > 0 ? { user_id: userId } : {};
+  };
 
   useEffect(() => setFeatureEnabled(!!invoiceEnabled), [invoiceEnabled]);
   useEffect(() => setVisibleUserIds(invoiceVisibleUserIds || ''), [invoiceVisibleUserIds]);
