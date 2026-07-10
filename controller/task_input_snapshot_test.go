@@ -142,3 +142,27 @@ func TestBuildTaskInputSnapshotFromMapKeepsLongNonBase64ImageURL(t *testing.T) {
 		t.Fatalf("snapshot should keep normal image url: %s", snapshot)
 	}
 }
+
+func TestBuildTaskInputSnapshotFromMapPreservesReferenceImagesArray(t *testing.T) {
+	snapshot := buildTaskInputSnapshotFromMap(map[string]any{
+		"reference_images": []any{
+			"https://example.com/1.png",
+			"https://example.com/2.png",
+		},
+	})
+	if snapshot == "" {
+		t.Fatal("snapshot is empty")
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal([]byte(snapshot), &got); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+	refs, ok := got["reference_images"].([]any)
+	if !ok {
+		t.Fatalf("reference_images type = %T, want []any", got["reference_images"])
+	}
+	if len(refs) != 2 || refs[0] != "https://example.com/1.png" || refs[1] != "https://example.com/2.png" {
+		t.Fatalf("reference_images = %#v", refs)
+	}
+}

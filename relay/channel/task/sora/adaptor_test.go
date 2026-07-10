@@ -1,6 +1,7 @@
 package sora
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -131,6 +132,48 @@ func TestBuildRequestBodyUsesOfficialModelMappingForURLEncodedRequest(t *testing
 	}
 	if got := values.Get("model"); got != "sora-2-official" {
 		t.Fatalf("model = %q, want %q", got, "sora-2-official")
+	}
+}
+
+func TestBuildRequestBodyPreservesReferenceImagesArrayForJSONRequest(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+
+	body := `{"model":"grok-imagine-video-1.5-preview","prompt":"test","duration":20,"reference_images":["https://example.com/1.png","https://example.com/2.png"]}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	c.Request = req
+
+	adaptor := &TaskAdaptor{}
+	info := &relaycommon.RelayInfo{
+		ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "grok-imagine-video-1.5-preview-cyuapi"},
+	}
+
+	reader, err := adaptor.BuildRequestBody(c, info)
+	if err != nil {
+		t.Fatalf("BuildRequestBody() error = %v", err)
+	}
+
+	rewrittenBody, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatalf("io.ReadAll() error = %v", err)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(rewrittenBody, &payload); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v, body=%s", err, rewrittenBody)
+	}
+	if got := payload["model"]; got != "grok-imagine-video-1.5-preview-cyuapi" {
+		t.Fatalf("model = %q, want mapped model", got)
+	}
+	refs, ok := payload["reference_images"].([]any)
+	if !ok {
+		t.Fatalf("reference_images type = %T, want []any; body=%s", payload["reference_images"], rewrittenBody)
+	}
+	if len(refs) != 2 || refs[0] != "https://example.com/1.png" || refs[1] != "https://example.com/2.png" {
+		t.Fatalf("reference_images = %#v", refs)
 	}
 }
 
