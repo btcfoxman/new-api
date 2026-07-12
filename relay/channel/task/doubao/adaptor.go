@@ -137,14 +137,28 @@ func (a *TaskAdaptor) BuildRequestHeader(_ *gin.Context, req *http.Request, _ *r
 func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInfo) map[string]float64 {
 	req, err := relaycommon.GetTaskRequest(c)
 	if err != nil {
-		return nil
+		return map[string]float64{"seconds": 4}
+	}
+	ratios := map[string]float64{
+		"seconds": normalizeDoubaoBillingSeconds(req.Duration, req.Seconds),
 	}
 	if hasVideoInMetadata(req.Metadata) {
 		if ratio, ok := GetVideoInputRatio(info.OriginModelName); ok {
-			return map[string]float64{"video_input": ratio}
+			ratios["video_input"] = ratio
 		}
 	}
-	return nil
+	return ratios
+}
+
+func normalizeDoubaoBillingSeconds(duration int, seconds string) float64 {
+	resolved := float64(duration)
+	if resolved <= 0 && seconds != "" {
+		_, _ = fmt.Sscanf(seconds, "%f", &resolved)
+	}
+	if resolved < 4 {
+		return 4
+	}
+	return resolved
 }
 
 // hasVideoInMetadata 直接检查 metadata 的 content 数组是否包含 video_url 条目，

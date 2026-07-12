@@ -34,3 +34,13 @@ func TestConvertToRequestPayloadKeepsTopLevelContentMedia(t *testing.T) {
 	require.Equal(t, "text", payload.Content[1].Type)
 	require.Equal(t, "draw this image", payload.Content[1].Text)
 }
+
+func TestNormalizeDoubaoBillingSecondsEnforcesMinimum(t *testing.T) {
+	require.Equal(t, float64(4), normalizeDoubaoBillingSeconds(0, ""))
+	require.Equal(t, float64(4), normalizeDoubaoBillingSeconds(1, ""))
+	require.Equal(t, float64(4), normalizeDoubaoBillingSeconds(3, ""))
+	require.Equal(t, float64(4), normalizeDoubaoBillingSeconds(4, ""))
+	require.Equal(t, float64(8), normalizeDoubaoBillingSeconds(8, ""))
+	require.Equal(t, float64(8), normalizeDoubaoBillingSeconds(0, "8"))
+	require.Equal(t, float64(4), normalizeDoubaoBillingSeconds(0, "1"))
+}
