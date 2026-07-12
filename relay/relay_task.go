@@ -201,6 +201,11 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		helper.AddTaskGroupResolutionRatio(info, resolution)
 	}
 
+	// The official Doubao create routes may be relayed through an OpenAI/LiteLLM
+	// channel, so provider-specific adaptors cannot reliably enforce video
+	// duration billing. Apply the minimum at the public-route boundary.
+	enforceDoubaoOfficialDurationBilling(c, info)
+
 	// 6. 将 OtherRatios 应用到基础额度
 	//    对“固定按次”分组，不应用 seconds/size 等倍率，避免与分组计费模式冲突。
 	forceApplyTaskOtherRatios := c.GetBool("force_apply_task_other_ratios")
@@ -271,6 +276,39 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		Platform:       platform,
 		Quota:          finalQuota,
 	}, nil
+}
+
+func enforceDoubaoOfficialDurationBilling(c *gin.Context, info *relaycommon.RelayInfo) {
+	if c == nil || info == nil {
+		return
+	}
+	path := strings.TrimRight(strings.ToLower(strings.TrimSpace(c.Request.URL.Path)), "/")
+	if path != "/api/v3/contents/generations/tasks" && path != "/oapi/v3/contents/generations/tasks" {
+		return
+	}
+
+	req, err := relaycommon.GetTaskRequest(c)
+	if err != nil {
+		return
+	}
+	if info.PriceData.OtherRatios == nil {
+		info.PriceData.OtherRatios = map[string]float64{}
+	}
+	info.PriceData.OtherRatios["seconds"] = normalizeOfficialVideoBillingSeconds(req.Duration, req.Seconds)
+	c.Set("force_apply_task_other_ratios", true)
+}
+
+func normalizeOfficialVideoBillingSeconds(duration int, seconds string) float64 {
+	resolved := float64(duration)
+	if resolved <= 0 && strings.TrimSpace(seconds) != "" {
+		if parsed, err := strconv.ParseFloat(strings.TrimSpace(seconds), 64); err == nil {
+			resolved = parsed
+		}
+	}
+	if resolved < 4 {
+		return 4
+	}
+	return resolved
 }
 
 // recalcQuotaFromRatios 根据 adjustedRatios 重新计算 quota。

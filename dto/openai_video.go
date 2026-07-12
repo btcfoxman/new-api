@@ -28,6 +28,16 @@ type OpenAIVideo struct {
 	RemixedFromVideoID string            `json:"remixed_from_video_id,omitempty"`
 	Error              *OpenAIVideoError `json:"error,omitempty"`
 	Metadata           map[string]any    `json:"metadata,omitempty"`
+	Output             *DashScopeVideoOutput `json:"output,omitempty"`
+	RequestID          string                `json:"request_id,omitempty"`
+}
+
+type DashScopeVideoOutput struct {
+	TaskID     string `json:"task_id"`
+	TaskStatus string `json:"task_status"`
+	VideoURL   string `json:"video_url,omitempty"`
+	Code       string `json:"code,omitempty"`
+	Message    string `json:"message,omitempty"`
 }
 
 func (m *OpenAIVideo) SetProgressStr(progress string) {

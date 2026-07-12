@@ -19,6 +19,14 @@ func TestTaskModel2DtoCopiesPrompt(t *testing.T) {
 	require.Equal(t, "draw this image", got.Prompt)
 }
 
+func TestNormalizeOfficialVideoBillingSecondsEnforcesMinimum(t *testing.T) {
+	require.Equal(t, float64(4), normalizeOfficialVideoBillingSeconds(0, ""))
+	require.Equal(t, float64(4), normalizeOfficialVideoBillingSeconds(1, ""))
+	require.Equal(t, float64(4), normalizeOfficialVideoBillingSeconds(0, "3"))
+	require.Equal(t, float64(8), normalizeOfficialVideoBillingSeconds(8, ""))
+	require.Equal(t, float64(12), normalizeOfficialVideoBillingSeconds(0, "12"))
+}
+
 func TestBuildAliOfficialTaskResponseCopiesTopLevelVideoURLToOutput(t *testing.T) {
 	task := &model.Task{
 		TaskID: "task_123",
