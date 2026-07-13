@@ -1076,15 +1076,27 @@ func buildAliOfficialTaskResponse(originTask *model.Task) []byte {
 	if strings.TrimSpace(requestID) == "" {
 		requestID = originTask.TaskID
 	}
-	officialResponse := map[string]any{
-		"output":     output,
-		"request_id": requestID,
+	payload["id"] = originTask.TaskID
+	payload["task_id"] = originTask.TaskID
+	payload["object"] = "video"
+	payload["status"] = openAIVideoTaskStatus(originTask.Status)
+	if _, ok := payload["model"]; !ok && strings.TrimSpace(originTask.Properties.OriginModelName) != "" {
+		payload["model"] = originTask.Properties.OriginModelName
 	}
-	if usage, ok := payload["usage"]; ok && usage != nil {
-		officialResponse["usage"] = usage
+	if _, ok := payload["created_at"]; !ok && originTask.CreatedAt > 0 {
+		payload["created_at"] = originTask.CreatedAt
 	}
+	if originTask.Status == model.TaskStatusSuccess {
+		if videoURL, ok := output["video_url"].(string); ok && strings.TrimSpace(videoURL) != "" {
+			payload["video_url"] = strings.TrimSpace(videoURL)
+		}
+	} else {
+		delete(payload, "video_url")
+	}
+	payload["output"] = output
+	payload["request_id"] = requestID
 
-	data, err := common.Marshal(officialResponse)
+	data, err := common.Marshal(payload)
 	if err == nil {
 		return data
 	}
@@ -1101,6 +1113,21 @@ func buildAliOfficialTaskResponse(originTask *model.Task) []byte {
 		"request_id": originTask.TaskID,
 	})
 	return fallback
+}
+
+func openAIVideoTaskStatus(status model.TaskStatus) string {
+	switch status {
+	case model.TaskStatusSubmitted, model.TaskStatusQueued:
+		return "queued"
+	case model.TaskStatusInProgress:
+		return "in_progress"
+	case model.TaskStatusSuccess:
+		return "completed"
+	case model.TaskStatusFailure:
+		return "failed"
+	default:
+		return "queued"
+	}
 }
 
 func aliTaskStatus(status model.TaskStatus) string {

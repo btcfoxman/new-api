@@ -496,13 +496,12 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 		if dResp.Output != nil && strings.TrimSpace(dResp.Output.TaskStatus) != "" {
 			taskStatus = dashScopeTaskStatus(dResp.Output.TaskStatus)
 		}
-		c.JSON(http.StatusOK, gin.H{
-			"output": dashScopeVideoOutput{
-				TaskID:     info.PublicTaskID,
-				TaskStatus: taskStatus,
-			},
-			"request_id": requestID,
-		})
+		dResp.Output = &dashScopeVideoOutput{
+			TaskID:     info.PublicTaskID,
+			TaskStatus: taskStatus,
+		}
+		dResp.RequestID = requestID
+		c.JSON(http.StatusOK, dResp)
 		return upstreamID, responseBody, nil
 	}
 	c.JSON(http.StatusOK, dResp)

@@ -48,10 +48,11 @@ func TestBuildAliOfficialTaskResponseCopiesTopLevelVideoURLToOutput(t *testing.T
 	var payload map[string]any
 	require.NoError(t, common.Unmarshal(body, &payload))
 	require.Equal(t, "task_123", payload["request_id"])
-	require.NotContains(t, payload, "id")
-	require.NotContains(t, payload, "object")
-	require.NotContains(t, payload, "status")
-	require.NotContains(t, payload, "video_url")
+	require.Equal(t, "task_123", payload["id"])
+	require.Equal(t, "task_123", payload["task_id"])
+	require.Equal(t, "video", payload["object"])
+	require.Equal(t, "completed", payload["status"])
+	require.Equal(t, "https://example.com/video.mp4", payload["video_url"])
 
 	output, ok := payload["output"].(map[string]any)
 	require.True(t, ok)
@@ -108,6 +109,9 @@ func TestBuildAliOfficialTaskResponseUsesCurrentTaskStatus(t *testing.T) {
 	require.Equal(t, "task_123", output["task_id"])
 	require.Equal(t, "RUNNING", output["task_status"])
 	require.NotContains(t, output, "video_url")
+	require.Equal(t, "task_123", payload["id"])
+	require.Equal(t, "in_progress", payload["status"])
+	require.NotContains(t, payload, "video_url")
 }
 
 func TestBuildDoubaoOfficialTaskResponseKeepLegacyAndOfficialFields(t *testing.T) {

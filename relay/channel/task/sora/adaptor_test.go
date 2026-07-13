@@ -192,8 +192,11 @@ func TestDashScopeHappyHorseCreateReturnsOfficialResponse(t *testing.T) {
 	if payload["request_id"] != "upstream-request-id" {
 		t.Fatalf("request_id = %#v", payload["request_id"])
 	}
-	if _, exists := payload["id"]; exists {
-		t.Fatalf("official response unexpectedly contains id: %#v", payload)
+	if payload["id"] != "task_public" || payload["task_id"] != "task_public" {
+		t.Fatalf("public task ids are missing: %#v", payload)
+	}
+	if payload["object"] != "video" || payload["status"] != "queued" {
+		t.Fatalf("Sora compatibility fields are missing: %#v", payload)
 	}
 }
 
