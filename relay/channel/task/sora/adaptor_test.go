@@ -99,6 +99,104 @@ func TestDashScopeHappyHorseRequestUsesNestedPromptForSoraChannel(t *testing.T) 
 	}
 }
 
+func TestDashScopeHappyHorseRequestAcceptsTopLevelPrompt(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/services/aigc/video-generation/video-synthesis", strings.NewReader(`{
+		"model": "happyhorse-1.0-r2v",
+		"prompt": "top-level prompt",
+		"input": {
+			"media": [{"type": "reference_image", "url": "https://example.com/one.png"}]
+		},
+		"parameters": {"duration": 5}
+	}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	adaptor := &TaskAdaptor{}
+	info := &relaycommon.RelayInfo{
+		TaskRelayInfo: &relaycommon.TaskRelayInfo{},
+		ChannelMeta:   &relaycommon.ChannelMeta{UpstreamModelName: "happyhorse-1.0"},
+	}
+	if taskErr := adaptor.ValidateRequestAndSetAction(c, info); taskErr != nil {
+		t.Fatalf("ValidateRequestAndSetAction() error = %v", taskErr)
+	}
+	req, err := relaycommon.GetTaskRequest(c)
+	if err != nil {
+		t.Fatalf("GetTaskRequest() error = %v", err)
+	}
+	if req.Prompt != "top-level prompt" {
+		t.Fatalf("prompt = %q", req.Prompt)
+	}
+
+	reader, err := adaptor.BuildRequestBody(c, info)
+	if err != nil {
+		t.Fatalf("BuildRequestBody() error = %v", err)
+	}
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatalf("io.ReadAll() error = %v", err)
+	}
+	var payload map[string]interface{}
+	if err := json.Unmarshal(data, &payload); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+	input, ok := payload["input"].(map[string]interface{})
+	if !ok || input["prompt"] != "top-level prompt" {
+		t.Fatalf("input = %#v", payload["input"])
+	}
+}
+
+func TestDashScopeHappyHorseCreateReturnsOfficialResponse(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/services/aigc/video-generation/video-synthesis", nil)
+	upstreamResponse := httptest.NewRecorder()
+	upstreamResponse.Code = http.StatusOK
+	upstreamResponse.Body.WriteString(`{
+		"id": "upstream-video-id",
+		"object": "video",
+		"model": "happyhorse-1.0-r2v",
+		"status": "queued",
+		"progress": 0,
+		"created_at": 1783950000,
+		"request_id": "upstream-request-id"
+	}`)
+
+	adaptor := &TaskAdaptor{}
+	info := &relaycommon.RelayInfo{
+		TaskRelayInfo: &relaycommon.TaskRelayInfo{PublicTaskID: "task_public"},
+	}
+	upstreamID, _, taskErr := adaptor.DoResponse(c, upstreamResponse.Result(), info)
+	if taskErr != nil {
+		t.Fatalf("DoResponse() error = %v", taskErr)
+	}
+	if upstreamID != "upstream-video-id" {
+		t.Fatalf("upstreamID = %q", upstreamID)
+	}
+
+	var payload map[string]interface{}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+	output, ok := payload["output"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("output = %#v", payload["output"])
+	}
+	if output["task_id"] != "task_public" || output["task_status"] != "PENDING" {
+		t.Fatalf("output = %#v", output)
+	}
+	if payload["request_id"] != "upstream-request-id" {
+		t.Fatalf("request_id = %#v", payload["request_id"])
+	}
+	if _, exists := payload["id"]; exists {
+		t.Fatalf("official response unexpectedly contains id: %#v", payload)
+	}
+}
+
 func TestBuildRequestBodyRewritesURLEncodedModel(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

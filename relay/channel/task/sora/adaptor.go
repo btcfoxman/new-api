@@ -58,6 +58,16 @@ type responseTask struct {
 		Message string `json:"message"`
 		Code    string `json:"code"`
 	} `json:"error,omitempty"`
+	Output    *dashScopeVideoOutput `json:"output,omitempty"`
+	RequestID string                `json:"request_id,omitempty"`
+}
+
+type dashScopeVideoOutput struct {
+	TaskID     string `json:"task_id"`
+	TaskStatus string `json:"task_status"`
+	VideoURL   string `json:"video_url,omitempty"`
+	Code       string `json:"code,omitempty"`
+	Message    string `json:"message,omitempty"`
 }
 
 // ============================
@@ -121,6 +131,10 @@ func validateDashScopeHappyHorseRequest(c *gin.Context, info *relaycommon.RelayI
 	input, _ := rawReq["input"].(map[string]interface{})
 	prompt, _ := input["prompt"].(string)
 	prompt = strings.TrimSpace(prompt)
+	if prompt == "" {
+		prompt, _ = rawReq["prompt"].(string)
+		prompt = strings.TrimSpace(prompt)
+	}
 	if prompt == "" {
 		return service.TaskErrorWrapperLocal(fmt.Errorf("prompt is required"), "invalid_request", http.StatusBadRequest)
 	}
@@ -344,10 +358,18 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 			bodyMap["model"] = info.UpstreamModelName
 			if isDashScopeHappyHorsePath(c.Request.URL.Path) {
 				input, _ := bodyMap["input"].(map[string]interface{})
-				if _, hasPrompt := bodyMap["prompt"]; !hasPrompt {
-					if prompt, ok := input["prompt"].(string); ok {
-						bodyMap["prompt"] = prompt
+				prompt, _ := input["prompt"].(string)
+				if strings.TrimSpace(prompt) == "" {
+					prompt, _ = bodyMap["prompt"].(string)
+					if strings.TrimSpace(prompt) != "" {
+						if input == nil {
+							input = map[string]interface{}{}
+							bodyMap["input"] = input
+						}
+						input["prompt"] = prompt
 					}
+				} else {
+					bodyMap["prompt"] = prompt
 				}
 				if mode, _ := bodyMap["mode"].(string); strings.TrimSpace(mode) == "" {
 					inferredMode := happyHorseModeFromModel(originalModel)
@@ -454,6 +476,9 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 	if upstreamID == "" {
 		upstreamID = dResp.TaskID
 	}
+	if upstreamID == "" && dResp.Output != nil {
+		upstreamID = dResp.Output.TaskID
+	}
 	if upstreamID == "" {
 		taskErr = service.TaskErrorWrapper(fmt.Errorf("task_id is empty"), "invalid_response", http.StatusInternalServerError)
 		return
@@ -462,8 +487,41 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 	// 使用公开 task_xxxx ID 返回给客户端
 	dResp.ID = info.PublicTaskID
 	dResp.TaskID = info.PublicTaskID
+	if isDashScopeHappyHorsePath(c.Request.URL.Path) {
+		requestID := strings.TrimSpace(dResp.RequestID)
+		if requestID == "" {
+			requestID = info.PublicTaskID
+		}
+		taskStatus := dashScopeTaskStatus(dResp.Status)
+		if dResp.Output != nil && strings.TrimSpace(dResp.Output.TaskStatus) != "" {
+			taskStatus = dashScopeTaskStatus(dResp.Output.TaskStatus)
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"output": dashScopeVideoOutput{
+				TaskID:     info.PublicTaskID,
+				TaskStatus: taskStatus,
+			},
+			"request_id": requestID,
+		})
+		return upstreamID, responseBody, nil
+	}
 	c.JSON(http.StatusOK, dResp)
 	return upstreamID, responseBody, nil
+}
+
+func dashScopeTaskStatus(status string) string {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "queued", "pending", "submitted":
+		return "PENDING"
+	case "in_progress", "processing", "running":
+		return "RUNNING"
+	case "completed", "succeeded", "success", "done", "finished":
+		return "SUCCEEDED"
+	case "failed", "fail", "error", "cancelled", "canceled":
+		return "FAILED"
+	default:
+		return strings.ToUpper(strings.TrimSpace(status))
+	}
 }
 
 // FetchTask fetch task status
