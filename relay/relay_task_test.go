@@ -47,7 +47,11 @@ func TestBuildAliOfficialTaskResponseCopiesTopLevelVideoURLToOutput(t *testing.T
 
 	var payload map[string]any
 	require.NoError(t, common.Unmarshal(body, &payload))
-	require.Equal(t, "https://example.com/video.mp4", payload["video_url"])
+	require.Equal(t, "task_123", payload["request_id"])
+	require.NotContains(t, payload, "id")
+	require.NotContains(t, payload, "object")
+	require.NotContains(t, payload, "status")
+	require.NotContains(t, payload, "video_url")
 
 	output, ok := payload["output"].(map[string]any)
 	require.True(t, ok)
@@ -74,6 +78,36 @@ func TestBuildAliOfficialTaskResponseFallbackCopiesResultURLToOutput(t *testing.
 	require.Equal(t, "task_123", output["task_id"])
 	require.Equal(t, "SUCCEEDED", output["task_status"])
 	require.Equal(t, "https://example.com/fallback.mp4", output["video_url"])
+	require.Equal(t, "task_123", payload["request_id"])
+}
+
+func TestBuildAliOfficialTaskResponseUsesCurrentTaskStatus(t *testing.T) {
+	task := &model.Task{
+		TaskID: "task_123",
+		Status: model.TaskStatusInProgress,
+		Data: []byte(`{
+			"id": "upstream_task",
+			"status": "completed",
+			"video_url": "https://example.com/stale.mp4",
+			"request_id": "upstream_request",
+			"output": {
+				"task_id": "upstream_task",
+				"task_status": "SUCCEEDED",
+				"video_url": "https://example.com/stale.mp4"
+			}
+		}`),
+	}
+
+	body := buildAliOfficialTaskResponse(task)
+
+	var payload map[string]any
+	require.NoError(t, common.Unmarshal(body, &payload))
+	require.Equal(t, "upstream_request", payload["request_id"])
+	output, ok := payload["output"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "task_123", output["task_id"])
+	require.Equal(t, "RUNNING", output["task_status"])
+	require.NotContains(t, output, "video_url")
 }
 
 func TestBuildDoubaoOfficialTaskResponseKeepLegacyAndOfficialFields(t *testing.T) {

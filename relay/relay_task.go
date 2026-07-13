@@ -1026,43 +1026,81 @@ func buildDoubaoOfficialTaskResponseWithMode(originTask *model.Task, pure bool) 
 }
 
 func buildAliOfficialTaskResponse(originTask *model.Task) []byte {
+	payload := map[string]any{}
 	if len(originTask.Data) > 0 {
-		var payload map[string]any
-		if err := common.Unmarshal(originTask.Data, &payload); err == nil && payload != nil {
-			output, _ := payload["output"].(map[string]any)
-			if output == nil {
-				output = map[string]any{}
-			}
-			output["task_id"] = originTask.TaskID
-			if _, ok := output["task_status"]; !ok {
-				output["task_status"] = aliTaskStatus(originTask.Status)
-			}
-			if existingVideoURL, ok := output["video_url"].(string); !ok || strings.TrimSpace(existingVideoURL) == "" {
-				if videoURL, ok := payload["video_url"].(string); ok && strings.TrimSpace(videoURL) != "" {
-					output["video_url"] = videoURL
-				}
-			}
-			payload["output"] = output
-			data, err := common.Marshal(payload)
-			if err == nil {
-				return data
-			}
+		if err := common.Unmarshal(originTask.Data, &payload); err != nil || payload == nil {
+			payload = map[string]any{}
 		}
 	}
 
-	output := map[string]any{
+	storedOutput, _ := payload["output"].(map[string]any)
+	output := map[string]any{}
+	for key, value := range storedOutput {
+		output[key] = value
+	}
+	output["task_id"] = originTask.TaskID
+	output["task_status"] = aliTaskStatus(originTask.Status)
+
+	if originTask.Status == model.TaskStatusSuccess {
+		videoURL, _ := output["video_url"].(string)
+		if strings.TrimSpace(videoURL) == "" {
+			videoURL, _ = payload["video_url"].(string)
+		}
+		if strings.TrimSpace(videoURL) == "" {
+			videoURL = originTask.GetResultURL()
+		}
+		if strings.TrimSpace(videoURL) != "" {
+			output["video_url"] = strings.TrimSpace(videoURL)
+		}
+		delete(output, "code")
+		delete(output, "message")
+	} else {
+		delete(output, "video_url")
+	}
+
+	if originTask.Status == model.TaskStatusFailure {
+		errorData, _ := payload["error"].(map[string]any)
+		if code, ok := errorData["code"].(string); ok && strings.TrimSpace(code) != "" {
+			output["code"] = code
+		}
+		message := strings.TrimSpace(originTask.FailReason)
+		if upstreamMessage, ok := errorData["message"].(string); ok && strings.TrimSpace(upstreamMessage) != "" {
+			message = strings.TrimSpace(upstreamMessage)
+		}
+		if message != "" {
+			output["message"] = message
+		}
+	}
+
+	requestID, _ := payload["request_id"].(string)
+	if strings.TrimSpace(requestID) == "" {
+		requestID = originTask.TaskID
+	}
+	officialResponse := map[string]any{
+		"output":     output,
+		"request_id": requestID,
+	}
+	if usage, ok := payload["usage"]; ok && usage != nil {
+		officialResponse["usage"] = usage
+	}
+
+	data, err := common.Marshal(officialResponse)
+	if err == nil {
+		return data
+	}
+
+	fallbackOutput := map[string]any{
 		"task_id":     originTask.TaskID,
 		"task_status": aliTaskStatus(originTask.Status),
-		"message":     originTask.FailReason,
 	}
-	if originTask.Status == model.TaskStatusSuccess {
-		if videoURL := strings.TrimSpace(originTask.GetResultURL()); videoURL != "" {
-			output["video_url"] = videoURL
-		}
+	if message := strings.TrimSpace(originTask.FailReason); message != "" {
+		fallbackOutput["message"] = message
 	}
-
-	data, _ := common.Marshal(map[string]any{"output": output})
-	return data
+	fallback, _ := common.Marshal(map[string]any{
+		"output":     fallbackOutput,
+		"request_id": originTask.TaskID,
+	})
+	return fallback
 }
 
 func aliTaskStatus(status model.TaskStatus) string {
