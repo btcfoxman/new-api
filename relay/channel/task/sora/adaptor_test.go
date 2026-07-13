@@ -9,10 +9,95 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/QuantumNous/new-api/constant"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayhelper "github.com/QuantumNous/new-api/relay/helper"
 	"github.com/gin-gonic/gin"
 )
+
+func TestDashScopeHappyHorseRequestUsesNestedPromptForSoraChannel(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/services/aigc/video-generation/video-synthesis", strings.NewReader(`{
+		"model": "happyhorse-1.0-r2v",
+		"input": {
+			"prompt": "move the person from image one into image two",
+			"media": [
+				{"type": "reference_image", "url": "https://example.com/one.png"},
+				{"type": "reference_image", "url": "https://example.com/two.png"}
+			]
+		},
+		"parameters": {
+			"resolution": "1080P",
+			"duration": 5,
+			"ratio": "16:9"
+		}
+	}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	adaptor := &TaskAdaptor{}
+	info := &relaycommon.RelayInfo{
+		TaskRelayInfo: &relaycommon.TaskRelayInfo{},
+		ChannelMeta: &relaycommon.ChannelMeta{
+			UpstreamModelName: "happyhorse-1.0",
+		},
+	}
+
+	if taskErr := adaptor.ValidateRequestAndSetAction(c, info); taskErr != nil {
+		t.Fatalf("ValidateRequestAndSetAction() error = %v", taskErr)
+	}
+	req, err := relaycommon.GetTaskRequest(c)
+	if err != nil {
+		t.Fatalf("GetTaskRequest() error = %v", err)
+	}
+	if req.Prompt != "move the person from image one into image two" {
+		t.Fatalf("prompt = %q", req.Prompt)
+	}
+	if req.Mode != "r2v" {
+		t.Fatalf("mode = %q, want r2v", req.Mode)
+	}
+	if req.Duration != 5 {
+		t.Fatalf("duration = %d, want 5", req.Duration)
+	}
+	if req.Size != "1080P" {
+		t.Fatalf("size = %q, want 1080P", req.Size)
+	}
+	if info.Action != constant.TaskActionReferenceGenerate {
+		t.Fatalf("action = %q, want %q", info.Action, constant.TaskActionReferenceGenerate)
+	}
+
+	reader, err := adaptor.BuildRequestBody(c, info)
+	if err != nil {
+		t.Fatalf("BuildRequestBody() error = %v", err)
+	}
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatalf("io.ReadAll() error = %v", err)
+	}
+	var payload map[string]interface{}
+	if err := json.Unmarshal(data, &payload); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+	if payload["model"] != "happyhorse-1.0" {
+		t.Fatalf("model = %v, want happyhorse-1.0", payload["model"])
+	}
+	if payload["prompt"] != "move the person from image one into image two" {
+		t.Fatalf("prompt = %v", payload["prompt"])
+	}
+	if payload["mode"] != "r2v" {
+		t.Fatalf("mode = %v, want r2v", payload["mode"])
+	}
+	input, ok := payload["input"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("input = %#v", payload["input"])
+	}
+	media, ok := input["media"].([]interface{})
+	if !ok || len(media) != 2 {
+		t.Fatalf("media = %#v", input["media"])
+	}
+}
 
 func TestBuildRequestBodyRewritesURLEncodedModel(t *testing.T) {
 	gin.SetMode(gin.TestMode)

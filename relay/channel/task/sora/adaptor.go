@@ -96,7 +96,75 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	if info.Action == constant.TaskActionRemix {
 		return validateRemixRequest(c)
 	}
+	if isDashScopeHappyHorsePath(c.Request.URL.Path) {
+		return validateDashScopeHappyHorseRequest(c, info)
+	}
 	return relaycommon.ValidateMultipartDirect(c, info)
+}
+
+func isDashScopeHappyHorsePath(path string) bool {
+	return strings.TrimRight(strings.ToLower(strings.TrimSpace(path)), "/") == "/api/v1/services/aigc/video-generation/video-synthesis"
+}
+
+func validateDashScopeHappyHorseRequest(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError {
+	var rawReq map[string]interface{}
+	if err := common.UnmarshalBodyReusable(c, &rawReq); err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_json", http.StatusBadRequest)
+	}
+
+	modelName, _ := rawReq["model"].(string)
+	modelName = strings.TrimSpace(modelName)
+	if modelName == "" {
+		return service.TaskErrorWrapperLocal(fmt.Errorf("model field is required"), "missing_model", http.StatusBadRequest)
+	}
+
+	input, _ := rawReq["input"].(map[string]interface{})
+	prompt, _ := input["prompt"].(string)
+	prompt = strings.TrimSpace(prompt)
+	if prompt == "" {
+		return service.TaskErrorWrapperLocal(fmt.Errorf("prompt is required"), "invalid_request", http.StatusBadRequest)
+	}
+	mode, _ := rawReq["mode"].(string)
+	mode = strings.TrimSpace(mode)
+	if mode == "" {
+		mode = happyHorseModeFromModel(modelName)
+	}
+	parameters, _ := rawReq["parameters"].(map[string]interface{})
+
+	req := relaycommon.TaskSubmitReq{
+		Model:      modelName,
+		Mode:       mode,
+		Prompt:     prompt,
+		Parameters: parameters,
+		Metadata:   rawReq,
+	}
+	if duration, ok := parsePositiveDuration(parameters["duration"]); ok {
+		req.Duration = duration
+	}
+	if resolution, ok := parameters["resolution"].(string); ok {
+		req.Size = strings.TrimSpace(resolution)
+	}
+
+	switch mode {
+	case "r2v":
+		info.Action = constant.TaskActionReferenceGenerate
+	case "i2v", "video_edit":
+		info.Action = constant.TaskActionGenerate
+	default:
+		info.Action = constant.TaskActionTextGenerate
+	}
+	c.Set("task_request", req)
+	return nil
+}
+
+func happyHorseModeFromModel(model string) string {
+	model = strings.ToLower(strings.TrimSpace(model))
+	for _, mode := range []string{"video_edit", "r2v", "i2v", "t2v"} {
+		if strings.HasSuffix(model, "-"+strings.ReplaceAll(mode, "_", "-")) {
+			return mode
+		}
+	}
+	return ""
 }
 
 // EstimateBilling 根据用户请求的 seconds 和 size 计算 OtherRatios。
@@ -272,7 +340,25 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	if strings.HasPrefix(contentType, "application/json") {
 		var bodyMap map[string]interface{}
 		if err := common.Unmarshal(cachedBody, &bodyMap); err == nil {
+			originalModel, _ := bodyMap["model"].(string)
 			bodyMap["model"] = info.UpstreamModelName
+			if isDashScopeHappyHorsePath(c.Request.URL.Path) {
+				input, _ := bodyMap["input"].(map[string]interface{})
+				if _, hasPrompt := bodyMap["prompt"]; !hasPrompt {
+					if prompt, ok := input["prompt"].(string); ok {
+						bodyMap["prompt"] = prompt
+					}
+				}
+				if mode, _ := bodyMap["mode"].(string); strings.TrimSpace(mode) == "" {
+					inferredMode := happyHorseModeFromModel(originalModel)
+					if inferredMode == "" {
+						inferredMode = happyHorseModeFromModel(info.UpstreamModelName)
+					}
+					if inferredMode != "" {
+						bodyMap["mode"] = inferredMode
+					}
+				}
+			}
 			if newBody, err := common.Marshal(bodyMap); err == nil {
 				return bytes.NewReader(newBody), nil
 			}
