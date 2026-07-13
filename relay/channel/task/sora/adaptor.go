@@ -492,10 +492,12 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 		if requestID == "" {
 			requestID = info.PublicTaskID
 		}
-		taskStatus := dashScopeTaskStatus(dResp.Status)
-		if dResp.Output != nil && strings.TrimSpace(dResp.Output.TaskStatus) != "" {
-			taskStatus = dashScopeTaskStatus(dResp.Output.TaskStatus)
+		statusSource := strings.TrimSpace(dResp.Status)
+		if statusSource == "" && dResp.Output != nil {
+			statusSource = dResp.Output.TaskStatus
 		}
+		taskStatus := dashScopeTaskStatus(statusSource)
+		dResp.Status = openAIVideoStatusFromDashScope(taskStatus)
 		dResp.Output = &dashScopeVideoOutput{
 			TaskID:     info.PublicTaskID,
 			TaskStatus: taskStatus,
@@ -520,6 +522,21 @@ func dashScopeTaskStatus(status string) string {
 		return "FAILED"
 	default:
 		return strings.ToUpper(strings.TrimSpace(status))
+	}
+}
+
+func openAIVideoStatusFromDashScope(status string) string {
+	switch strings.ToUpper(strings.TrimSpace(status)) {
+	case "PENDING":
+		return "queued"
+	case "RUNNING":
+		return "in_progress"
+	case "SUCCEEDED":
+		return "completed"
+	case "FAILED":
+		return "failed"
+	default:
+		return strings.ToLower(strings.TrimSpace(status))
 	}
 }
 

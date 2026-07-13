@@ -163,7 +163,11 @@ func TestDashScopeHappyHorseCreateReturnsOfficialResponse(t *testing.T) {
 		"status": "queued",
 		"progress": 0,
 		"created_at": 1783950000,
-		"request_id": "upstream-request-id"
+		"request_id": "upstream-request-id",
+		"output": {
+			"task_id": "upstream-video-id",
+			"task_status": "SUCCEEDED"
+		}
 	}`)
 
 	adaptor := &TaskAdaptor{}
