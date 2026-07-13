@@ -740,6 +740,24 @@ func respondTaskError(c *gin.Context, taskErr *dto.TaskError) {
 	if taskErr.StatusCode == http.StatusTooManyRequests {
 		taskErr.Message = "当前分组上游负载已饱和，请稍后再试"
 	}
+	if strings.TrimRight(strings.ToLower(strings.TrimSpace(c.Request.URL.Path)), "/") == "/api/v1/services/aigc/video-generation/video-synthesis" {
+		errorType := "upstream_error"
+		if taskErr.StatusCode >= http.StatusBadRequest && taskErr.StatusCode < http.StatusInternalServerError {
+			errorType = "invalid_request_error"
+		}
+		c.JSON(taskErr.StatusCode, gin.H{
+			"code":       taskErr.Code,
+			"message":    taskErr.Message,
+			"data":       taskErr.Data,
+			"request_id": c.GetString(common.RequestIdKey),
+			"error": gin.H{
+				"code":    taskErr.Code,
+				"message": taskErr.Message,
+				"type":    errorType,
+			},
+		})
+		return
+	}
 	c.JSON(taskErr.StatusCode, taskErr)
 }
 

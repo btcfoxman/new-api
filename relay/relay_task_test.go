@@ -114,6 +114,30 @@ func TestBuildAliOfficialTaskResponseUsesCurrentTaskStatus(t *testing.T) {
 	require.NotContains(t, payload, "video_url")
 }
 
+func TestBuildAliOfficialTaskResponseFailureUsesCompatibleErrorFields(t *testing.T) {
+	task := &model.Task{
+		TaskID:     "task_failed",
+		Status:     model.TaskStatusFailure,
+		FailReason: "video generation was rejected",
+	}
+
+	body := buildAliOfficialTaskResponse(task)
+
+	var payload map[string]any
+	require.NoError(t, common.Unmarshal(body, &payload))
+	require.Equal(t, "failed", payload["status"])
+	errorData, ok := payload["error"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "generation_failed", errorData["code"])
+	require.Equal(t, "video generation was rejected", errorData["message"])
+	output, ok := payload["output"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "FAILED", output["task_status"])
+	require.Equal(t, "generation_failed", output["code"])
+	require.Equal(t, "video generation was rejected", output["message"])
+	require.Equal(t, "task_failed", payload["request_id"])
+}
+
 func TestBuildDoubaoOfficialTaskResponseKeepLegacyAndOfficialFields(t *testing.T) {
 	task := &model.Task{
 		TaskID: "task_8ytcrEEGJa9NKz2g1zs0BayvWiZ9fdKA",

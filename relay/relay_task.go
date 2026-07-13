@@ -1060,15 +1060,21 @@ func buildAliOfficialTaskResponse(originTask *model.Task) []byte {
 
 	if originTask.Status == model.TaskStatusFailure {
 		errorData, _ := payload["error"].(map[string]any)
+		errorCode := "generation_failed"
 		if code, ok := errorData["code"].(string); ok && strings.TrimSpace(code) != "" {
-			output["code"] = code
+			errorCode = strings.TrimSpace(code)
 		}
 		message := strings.TrimSpace(originTask.FailReason)
 		if upstreamMessage, ok := errorData["message"].(string); ok && strings.TrimSpace(upstreamMessage) != "" {
 			message = strings.TrimSpace(upstreamMessage)
 		}
+		output["code"] = errorCode
 		if message != "" {
 			output["message"] = message
+		}
+		payload["error"] = map[string]any{
+			"code":    errorCode,
+			"message": message,
 		}
 	}
 
