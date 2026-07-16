@@ -1049,7 +1049,7 @@ func sendInvoiceIssuedEmail(app *InvoiceApplication, invoiceFileUrl string) erro
 	return common.SendEmail("发票已开具", email, content)
 }
 
-func UpdateInvoiceApplicationByAdmin(id int, adminId int, status string, invoiceNo string, invoiceFileUrl string, fileType string, rejectReason string) error {
+func UpdateInvoiceApplicationByAdmin(id int, adminId int, status string, invoiceNo string, invoiceFileUrl string, fileType string, rejectReason string, sendEmail bool) error {
 	allowed := map[string]bool{
 		InvoiceApplicationStatusPending:    true,
 		InvoiceApplicationStatusApproved:   true,
@@ -1126,7 +1126,7 @@ func UpdateInvoiceApplicationByAdmin(id int, adminId int, status string, invoice
 	if err != nil {
 		return err
 	}
-	if issuedApp != nil && issuedFileUrl != "" && strings.TrimSpace(issuedApp.Email) != "" {
+	if sendEmail && issuedApp != nil && issuedFileUrl != "" && strings.TrimSpace(issuedApp.Email) != "" {
 		if err := sendInvoiceIssuedEmail(issuedApp, issuedFileUrl); err != nil {
 			_ = DB.Create(&InvoiceOperationLog{
 				ApplicationId: issuedApp.Id,

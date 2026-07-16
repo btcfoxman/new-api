@@ -368,7 +368,7 @@ const InvoiceWalletCard = ({ t, renderQuota, invoiceEnabled = false, invoiceVisi
       setReviewSubmitting(false);
     }
   };
-  const openInvoiceUpdateModal = (record) => setInvoiceUpdateModal({ visible: true, record, form: { status: record.status || 'approved', invoice_no: record.invoice_no || '', invoice_file_url: record.invoice_file_url || '', file_type: record.file_type || 'pdf', reject_reason: record.reject_reason || '' } });
+  const openInvoiceUpdateModal = (record) => setInvoiceUpdateModal({ visible: true, record, form: { status: record.status || 'approved', invoice_no: record.invoice_no || '', invoice_file_url: record.invoice_file_url || '', file_type: record.file_type || 'pdf', reject_reason: record.reject_reason || '', send_email: true } });
   const submitInvoiceUpdate = async () => {
     setInvoiceUpdateSubmitting(true);
     try {
@@ -573,6 +573,7 @@ const InvoiceWalletCard = ({ t, renderQuota, invoiceEnabled = false, invoiceVisi
           <Input prefix='发票号' value={invoiceUpdateModal.form.invoice_no || ''} onChange={(value) => setInvoiceUpdateModal({ ...invoiceUpdateModal, form: { ...invoiceUpdateModal.form, invoice_no: value } })} />
           <Input prefix='文件链接' value={invoiceUpdateModal.form.invoice_file_url || ''} onChange={(value) => setInvoiceUpdateModal({ ...invoiceUpdateModal, form: { ...invoiceUpdateModal.form, invoice_file_url: value } })} />
           <Input prefix='文件类型' value={invoiceUpdateModal.form.file_type || 'pdf'} onChange={(value) => setInvoiceUpdateModal({ ...invoiceUpdateModal, form: { ...invoiceUpdateModal.form, file_type: value } })} />
+          {invoiceUpdateModal.form.status === 'issued' ? <Checkbox checked={invoiceUpdateModal.form.send_email !== false} onChange={(e) => setInvoiceUpdateModal({ ...invoiceUpdateModal, form: { ...invoiceUpdateModal.form, send_email: Boolean(e?.target?.checked) } })}>推送邮箱</Checkbox> : null}
           <textarea className='w-full min-h-[90px] rounded-md border border-[var(--semi-color-border)] bg-[var(--semi-color-bg-0)] p-3' placeholder='驳回/失败原因' value={invoiceUpdateModal.form.reject_reason || ''} onChange={(e) => setInvoiceUpdateModal({ ...invoiceUpdateModal, form: { ...invoiceUpdateModal.form, reject_reason: e.target.value } })} />
         </div>
       </Modal>

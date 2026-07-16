@@ -38,6 +38,7 @@ type invoiceAdminUpdateRequest struct {
 	InvoiceFileUrl string `json:"invoice_file_url"`
 	FileType       string `json:"file_type"`
 	RejectReason   string `json:"reject_reason"`
+	SendEmail      *bool  `json:"send_email"`
 }
 
 type invoiceEmailForwardRequest struct {
@@ -246,7 +247,11 @@ func AdminUpdateInvoice(c *gin.Context) {
 		common.ApiErrorMsg(c, "参数错误")
 		return
 	}
-	if err := model.UpdateInvoiceApplicationByAdmin(id, c.GetInt("id"), req.Status, req.InvoiceNo, req.InvoiceFileUrl, req.FileType, req.RejectReason); err != nil {
+	sendEmail := true
+	if req.SendEmail != nil {
+		sendEmail = *req.SendEmail
+	}
+	if err := model.UpdateInvoiceApplicationByAdmin(id, c.GetInt("id"), req.Status, req.InvoiceNo, req.InvoiceFileUrl, req.FileType, req.RejectReason, sendEmail); err != nil {
 		common.ApiError(c, err)
 		return
 	}
