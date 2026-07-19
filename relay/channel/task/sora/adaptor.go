@@ -81,7 +81,50 @@ type TaskAdaptor struct {
 	baseURL     string
 }
 
-var inlineVideoDurationPattern = regexp.MustCompile(`(?i)(^|\s)--(?:dur|duration)(?:=|\s+)(\S+)`)
+var (
+	inlineVideoDurationPattern = regexp.MustCompile(`(?i)(^|\s)--(?:dur|duration)(?:=|\s+)(\S+)`)
+	videoModeTokenReplacer     = strings.NewReplacer("-", "_", " ", "_")
+)
+
+var referenceVideoFrameFields = []string{
+	"first_frame",
+	"last_frame",
+	"end_frame",
+	"start_frame",
+	"first_frame_url",
+	"last_frame_url",
+	"end_frame_url",
+	"start_frame_url",
+	"tail_frame_url",
+	"first_image",
+	"last_image",
+	"end_image",
+	"end_images",
+	"image_tail",
+	"first_image_url",
+	"last_image_url",
+	"end_image_url",
+	"start_image_url",
+	"tail_image_url",
+	"first_frame_image",
+	"last_frame_image",
+	"end_frame_image",
+	"first_frame_image_url",
+	"last_frame_image_url",
+	"end_frame_image_url",
+}
+
+var referenceVideoImageFields = []string{
+	"image",
+	"image_url",
+	"images",
+	"image_urls",
+	"reference_image",
+	"reference_image_url",
+	"reference_image_urls",
+	"reference_images",
+	"input_reference",
+}
 
 func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
 	a.ChannelType = info.ChannelType
@@ -109,7 +152,14 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	if isDashScopeHappyHorsePath(c.Request.URL.Path) {
 		return validateDashScopeHappyHorseRequest(c, info)
 	}
-	return relaycommon.ValidateMultipartDirect(c, info)
+	if taskErr := relaycommon.ValidateMultipartDirect(c, info); taskErr != nil {
+		return taskErr
+	}
+	taskReq, err := relaycommon.GetTaskRequest(c)
+	if err == nil && isReferenceVideoMode(taskReq.Mode) {
+		info.Action = constant.TaskActionReferenceGenerate
+	}
+	return nil
 }
 
 func isDashScopeHappyHorsePath(path string) bool {
@@ -356,6 +406,9 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		if err := common.Unmarshal(cachedBody, &bodyMap); err == nil {
 			originalModel, _ := bodyMap["model"].(string)
 			bodyMap["model"] = info.UpstreamModelName
+			if shouldNormalizeReferenceVideoRequest(info) {
+				normalizeReferenceVideoJSONBody(bodyMap)
+			}
 			if isDashScopeHappyHorsePath(c.Request.URL.Path) {
 				input, _ := bodyMap["input"].(map[string]interface{})
 				prompt, _ := input["prompt"].(string)
@@ -392,6 +445,9 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		formData, err := common.ParseMultipartFormReusable(c)
 		if err != nil {
 			return bytes.NewReader(cachedBody), nil
+		}
+		if shouldNormalizeReferenceVideoRequest(info) {
+			normalizeReferenceVideoFormValues(url.Values(formData.Value))
 		}
 		var buf bytes.Buffer
 		writer := multipart.NewWriter(&buf)
@@ -444,11 +500,202 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		if err != nil {
 			return bytes.NewReader(cachedBody), nil
 		}
+		if shouldNormalizeReferenceVideoRequest(info) {
+			normalizeReferenceVideoFormValues(values)
+		}
 		values.Set("model", info.UpstreamModelName)
 		return strings.NewReader(values.Encode()), nil
 	}
 
 	return common.ReaderOnly(storage), nil
+}
+
+func shouldNormalizeReferenceVideoRequest(info *relaycommon.RelayInfo) bool {
+	return info == nil || info.TaskRelayInfo == nil || info.Action != constant.TaskActionRemix
+}
+
+func normalizeReferenceVideoJSONBody(body map[string]interface{}) {
+	if body == nil {
+		return
+	}
+	mode, _ := body["mode"].(string)
+	if !isReferenceVideoMode(mode) {
+		return
+	}
+
+	seenURLs := make(map[string]struct{})
+	for _, field := range referenceVideoImageFields {
+		collectReferenceVideoURLs(body[field], seenURLs, nil)
+	}
+	collectReferenceVideoContentImageURLs(body["content"], seenURLs)
+
+	promotedURLs := make([]string, 0, len(referenceVideoFrameFields))
+	for _, field := range referenceVideoFrameFields {
+		collectReferenceVideoURLs(body[field], nil, &promotedURLs)
+		delete(body, field)
+	}
+	normalizeReferenceVideoContentRoles(body["content"])
+
+	for _, mediaURL := range promotedURLs {
+		if _, exists := seenURLs[mediaURL]; exists {
+			continue
+		}
+		body["reference_images"] = appendReferenceVideoImage(body["reference_images"], mediaURL)
+		seenURLs[mediaURL] = struct{}{}
+	}
+}
+
+func normalizeReferenceVideoFormValues(values url.Values) {
+	if values == nil || !isReferenceVideoMode(values.Get("mode")) {
+		return
+	}
+
+	seenURLs := make(map[string]struct{})
+	for _, field := range referenceVideoImageFields {
+		for _, value := range values[field] {
+			if mediaURL := strings.TrimSpace(value); mediaURL != "" {
+				seenURLs[mediaURL] = struct{}{}
+			}
+		}
+	}
+	for _, field := range referenceVideoFrameFields {
+		for _, value := range values[field] {
+			mediaURL := strings.TrimSpace(value)
+			if mediaURL == "" {
+				continue
+			}
+			if _, exists := seenURLs[mediaURL]; !exists {
+				values.Add("reference_images", mediaURL)
+				seenURLs[mediaURL] = struct{}{}
+			}
+		}
+		values.Del(field)
+	}
+}
+
+func collectReferenceVideoURLs(value interface{}, seen map[string]struct{}, collected *[]string) {
+	appendURL := func(raw string) {
+		mediaURL := strings.TrimSpace(raw)
+		if mediaURL == "" {
+			return
+		}
+		if seen != nil {
+			seen[mediaURL] = struct{}{}
+		}
+		if collected != nil {
+			*collected = append(*collected, mediaURL)
+		}
+	}
+
+	switch typed := value.(type) {
+	case string:
+		appendURL(typed)
+	case []string:
+		for _, item := range typed {
+			appendURL(item)
+		}
+	case []interface{}:
+		for _, item := range typed {
+			collectReferenceVideoURLs(item, seen, collected)
+		}
+	case map[string]interface{}:
+		for _, key := range []string{"url", "image_url", "image", "b64_json"} {
+			if nested, exists := typed[key]; exists {
+				collectReferenceVideoURLs(nested, seen, collected)
+			}
+		}
+	}
+}
+
+func collectReferenceVideoContentImageURLs(content interface{}, seen map[string]struct{}) {
+	visit := func(item interface{}) {
+		itemMap, ok := item.(map[string]interface{})
+		if !ok || !isReferenceVideoImageContentType(itemMap["type"]) {
+			return
+		}
+		collectReferenceVideoURLs(itemMap["image_url"], seen, nil)
+		collectReferenceVideoURLs(itemMap["url"], seen, nil)
+	}
+
+	switch typed := content.(type) {
+	case []interface{}:
+		for _, item := range typed {
+			visit(item)
+		}
+	case []map[string]interface{}:
+		for _, item := range typed {
+			visit(item)
+		}
+	}
+}
+
+func normalizeReferenceVideoContentRoles(content interface{}) {
+	visit := func(item interface{}) {
+		itemMap, ok := item.(map[string]interface{})
+		if !ok || !isReferenceVideoImageContentType(itemMap["type"]) {
+			return
+		}
+		role, _ := itemMap["role"].(string)
+		switch normalizeVideoModeToken(role) {
+		case "first", "last", "start", "end", "first_frame", "last_frame", "start_frame", "end_frame", "tail_frame", "first_image", "last_image", "start_image", "end_image", "tail_image", "image_tail":
+			itemMap["role"] = "reference_image"
+		}
+	}
+
+	switch typed := content.(type) {
+	case []interface{}:
+		for _, item := range typed {
+			visit(item)
+		}
+	case []map[string]interface{}:
+		for _, item := range typed {
+			visit(item)
+		}
+	}
+}
+
+func isReferenceVideoImageContentType(value interface{}) bool {
+	itemType, _ := value.(string)
+	switch normalizeVideoModeToken(itemType) {
+	case "image", "image_url", "input_image":
+		return true
+	default:
+		return false
+	}
+}
+
+func normalizeVideoModeToken(value string) string {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	normalized = videoModeTokenReplacer.Replace(normalized)
+	for strings.Contains(normalized, "__") {
+		normalized = strings.ReplaceAll(normalized, "__", "_")
+	}
+	return normalized
+}
+
+func isReferenceVideoMode(mode string) bool {
+	switch normalizeVideoModeToken(mode) {
+	case "r2v", "reference", "reference2video", "reference_to_video", "reference_video", "reference_images", "reference_material", "reference_materials", "multi_reference":
+		return true
+	default:
+		return false
+	}
+}
+
+func appendReferenceVideoImage(existing interface{}, mediaURL string) []interface{} {
+	values := make([]interface{}, 0)
+	switch typed := existing.(type) {
+	case nil:
+	case []interface{}:
+		values = append(values, typed...)
+	case []string:
+		for _, value := range typed {
+			values = append(values, value)
+		}
+	default:
+		values = append(values, typed)
+	}
+	return append(values, mediaURL)
 }
 
 // DoRequest delegates to common helper.
