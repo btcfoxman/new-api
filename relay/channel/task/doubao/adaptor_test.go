@@ -11,6 +11,7 @@ func TestConvertToRequestPayloadKeepsTopLevelContentMedia(t *testing.T) {
 	adaptor := &TaskAdaptor{}
 	req := &relaycommon.TaskSubmitReq{
 		Model:  "doubao-video",
+		Mode:   "i2v_first_last",
 		Prompt: "draw this image",
 		Content: []map[string]interface{}{
 			{
@@ -18,6 +19,8 @@ func TestConvertToRequestPayloadKeepsTopLevelContentMedia(t *testing.T) {
 				"image_url": map[string]interface{}{
 					"url": "https://example.com/input.png",
 				},
+				"role": "first_frame",
+				"name": "image1",
 			},
 			{
 				"type": "text",
@@ -28,9 +31,12 @@ func TestConvertToRequestPayloadKeepsTopLevelContentMedia(t *testing.T) {
 
 	payload, err := adaptor.convertToRequestPayload(req)
 	require.NoError(t, err)
+	require.Equal(t, "i2v_first_last", payload.Mode)
 	require.Len(t, payload.Content, 2)
 	require.Equal(t, "image_url", payload.Content[0].Type)
 	require.Equal(t, "https://example.com/input.png", payload.Content[0].ImageURL.URL)
+	require.Equal(t, "first_frame", payload.Content[0].Role)
+	require.Equal(t, "image1", payload.Content[0].Name)
 	require.Equal(t, "text", payload.Content[1].Type)
 	require.Equal(t, "draw this image", payload.Content[1].Text)
 }

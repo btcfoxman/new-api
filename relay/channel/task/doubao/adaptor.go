@@ -35,6 +35,7 @@ type ContentItem struct {
 	VideoURL *MediaURL `json:"video_url,omitempty"`
 	AudioURL *MediaURL `json:"audio_url,omitempty"`
 	Role     string    `json:"role,omitempty"`
+	Name     string    `json:"name,omitempty"`
 }
 
 type MediaURL struct {
@@ -43,6 +44,7 @@ type MediaURL struct {
 
 type requestPayload struct {
 	Model                 string         `json:"model"`
+	Mode                  string         `json:"mode,omitempty"`
 	Content               []ContentItem  `json:"content,omitempty"`
 	CallbackURL           string         `json:"callback_url,omitempty"`
 	ReturnLastFrame       *dto.BoolValue `json:"return_last_frame,omitempty"`
@@ -285,6 +287,7 @@ func (a *TaskAdaptor) GetChannelName() string {
 func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq) (*requestPayload, error) {
 	r := requestPayload{
 		Model:   req.Model,
+		Mode:    req.Mode,
 		Content: []ContentItem{},
 	}
 
@@ -328,6 +331,7 @@ func convertTaskContentItems(items []map[string]interface{}) []ContentItem {
 			Type:     stringFromTaskContentValue(item["type"]),
 			Text:     stringFromTaskContentValue(item["text"]),
 			Role:     stringFromTaskContentValue(item["role"]),
+			Name:     stringFromTaskContentValue(item["name"]),
 			ImageURL: mediaURLFromTaskContentValue(item["image_url"]),
 			VideoURL: mediaURLFromTaskContentValue(item["video_url"]),
 			AudioURL: mediaURLFromTaskContentValue(item["audio_url"]),
