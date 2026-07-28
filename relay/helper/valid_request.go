@@ -155,6 +155,17 @@ func GetAndValidOpenAIImageRequest(c *gin.Context, relayMode int) (*dto.ImageReq
 			imageRequest.N = common.GetPointer(uint(common.String2Int(formData.Get("n"))))
 			imageRequest.Quality = formData.Get("quality")
 			imageRequest.Size = formData.Get("size")
+			copyImageFormRawMessage(formData, "ratio", &imageRequest.Ratio)
+			copyImageFormRawMessage(formData, "aspect_ratio", &imageRequest.AspectRatio)
+			copyImageFormRawMessage(formData, "aspectRatio", &imageRequest.AspectRatioCamel)
+			copyImageFormRawMessage(formData, "ar", &imageRequest.AR)
+			copyImageFormRawMessage(formData, "aspect", &imageRequest.Aspect)
+			copyImageFormRawMessage(formData, "resolution", &imageRequest.Resolution)
+			copyImageFormRawMessage(formData, "seed", &imageRequest.Seed)
+			copyImageFormRawMessage(formData, "count", &imageRequest.Count)
+			copyImageFormRawMessage(formData, "names", &imageRequest.Names)
+			copyImageFormRawMessage(formData, "image_names", &imageRequest.ImageNames)
+			copyImageFormRawMessage(formData, "imageNames", &imageRequest.ImageNamesCamel)
 			if imageValue := formData.Get("image"); imageValue != "" {
 				imageRequest.Image, _ = json.Marshal(imageValue)
 			}
@@ -225,6 +236,22 @@ func GetAndValidOpenAIImageRequest(c *gin.Context, relayMode int) (*dto.ImageReq
 	}
 
 	return imageRequest, nil
+}
+
+func copyImageFormRawMessage(formData map[string][]string, field string, target *json.RawMessage) {
+	values, ok := formData[field]
+	if !ok || len(values) == 0 {
+		return
+	}
+	var value any
+	if len(values) == 1 {
+		value = values[0]
+	} else {
+		value = values
+	}
+	if raw, err := json.Marshal(value); err == nil {
+		*target = raw
+	}
 }
 
 func GetAndValidateClaudeRequest(c *gin.Context) (textRequest *dto.ClaudeRequest, err error) {
