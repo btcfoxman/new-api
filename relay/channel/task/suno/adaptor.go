@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -33,6 +34,23 @@ func (a *TaskAdaptor) ParseTaskResult([]byte) (*relaycommon.TaskInfo, error) {
 
 func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
 	a.ChannelType = info.ChannelType
+}
+
+func (a *TaskAdaptor) EstimateBilling(c *gin.Context, _ *relaycommon.RelayInfo) map[string]float64 {
+	value, ok := c.Get("task_request")
+	if !ok {
+		return nil
+	}
+	sunoRequest, ok := value.(*dto.SunoSubmitReq)
+	if !ok || sunoRequest == nil {
+		return nil
+	}
+	modelName := resolveSunoBillingModel(sunoRequest)
+	credits := resolveSunoDynamicCredits(sunoRequest, modelName)
+	if credits <= 0 {
+		return nil
+	}
+	return map[string]float64{"credits": float64(credits)}
 }
 
 func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.TaskError) {
@@ -162,11 +180,12 @@ func actionValidate(c *gin.Context, sunoRequest *dto.SunoSubmitReq, action strin
 		hasExplicitMusicModel := sunoRequest.UpstreamModel != "" ||
 			sunoRequest.MusicModel != "" ||
 			sunoRequest.Engine != "" ||
-			sunoRequest.ModelID != "" ||
-			sunoRequest.ModelIDCamel != "" ||
-			sunoRequest.Mv != ""
+			hasSunoModelValue(sunoRequest.ModelID) ||
+			hasSunoModelValue(sunoRequest.ModelIDCamel) ||
+			sunoRequest.Mv != "" ||
+			normalizeSunoMusicBillingModel(sunoRequest.Model) != ""
 		if !hasExplicitMusicModel {
-			sunoRequest.UpstreamModel = "suno-v5"
+			sunoRequest.UpstreamModel = "suno-v5.5"
 		}
 	case constant.SunoActionLyrics:
 		if sunoRequest.Model == "" {
@@ -184,9 +203,9 @@ func actionValidate(c *gin.Context, sunoRequest *dto.SunoSubmitReq, action strin
 
 func resolveSunoBillingModel(sunoRequest *dto.SunoSubmitReq) string {
 	if sunoRequest == nil {
-		return "suno-v5"
+		return "suno-v5.5"
 	}
-	for _, value := range []string{
+	for _, value := range []interface{}{
 		sunoRequest.UpstreamModel,
 		sunoRequest.MusicModel,
 		sunoRequest.Engine,
@@ -199,16 +218,27 @@ func resolveSunoBillingModel(sunoRequest *dto.SunoSubmitReq) string {
 			return modelName
 		}
 	}
-	return "suno-v5"
+	return "suno-v5.5"
 }
 
-func normalizeSunoMusicBillingModel(value string) string {
-	normalized := strings.ToLower(strings.TrimSpace(value))
+func normalizeSunoMusicBillingModel(value interface{}) string {
+	if !hasSunoModelValue(value) {
+		return ""
+	}
+	normalized := strings.ToLower(strings.TrimSpace(fmt.Sprint(value)))
 	normalized = strings.ReplaceAll(normalized, "_", "-")
 	if normalized == "" || normalized == "music" || normalized == "suno-music" {
 		return ""
 	}
 	switch normalized {
+	case "suno-v5.5", "suno-v55", "suno-5.5", "suno-55", "v5.5", "v55", "chirp-fenix", "128":
+		return "suno-v5.5"
+	case "seed-audio", "seed-audio-1.0", "seed-audio-1-0", "126":
+		return "seed-audio-1.0"
+	case "minimax-speech", "minimax-speech-2.8-hd", "minimax-speech-2-8-hd", "speech-2.8-hd", "speech-2-8-hd", "127":
+		return "minimax-speech-2.8-hd"
+	case "lyria", "lyria-3-pro", "lyria-3-pro-preview", "129":
+		return "lyria-3-pro"
 	case "suno", "suno-v5", "suno-5", "v5", "chirp-v5", "chirp-v5.0", "chirp-crow", "85":
 		return "suno-v5"
 	case "minimax", "minimax-music", "minimax-music-v2.6", "minimax-music-v2-6", "minimax-music-2.6", "105":
@@ -220,4 +250,36 @@ func normalizeSunoMusicBillingModel(value string) string {
 	default:
 		return ""
 	}
+}
+
+func hasSunoModelValue(value interface{}) bool {
+	if value == nil {
+		return false
+	}
+	return strings.TrimSpace(fmt.Sprint(value)) != ""
+}
+
+func resolveSunoDynamicCredits(sunoRequest *dto.SunoSubmitReq, modelName string) int {
+	if sunoRequest == nil {
+		return 0
+	}
+	if modelName != "seed-audio-1.0" && modelName != "minimax-speech-2.8-hd" {
+		return 0
+	}
+	prompt := strings.TrimSpace(sunoRequest.Prompt)
+	if prompt == "" {
+		prompt = strings.TrimSpace(sunoRequest.GptDescriptionPrompt)
+	}
+	charCount := utf8.RuneCountInString(prompt)
+	if charCount < 1 {
+		charCount = 1
+	}
+	if modelName == "seed-audio-1.0" {
+		return ((charCount + 14) / 15) * 2
+	}
+	credits := (charCount / 100) * 10
+	if credits < 10 {
+		return 10
+	}
+	return credits
 }
