@@ -11,11 +11,50 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
+	"github.com/QuantumNous/new-api/types"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
+
+func TestTaskUsesPerCallPricingFollowsResolvedGroupDimensions(t *testing.T) {
+	original := ratio_setting.GetTaskGroupPricingRuleCopy()
+	originalJSON, err := common.Marshal(original)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, ratio_setting.UpdateModelPriceByGroupByJSONString(string(originalJSON)))
+	})
+	require.NoError(t, ratio_setting.UpdateModelPriceByGroupByJSONString(`{
+		"gemini-omni": {
+			"default": {"billing_mode":"per_call","base_price":1}
+		},
+		"sd-2-5": {
+			"default": {"billing_mode":"per_second","base_price":1.2}
+		},
+		"kling-video": {
+			"default": {
+				"billing_mode":"per_call",
+				"base_price":0.6,
+				"dimensions":{"mode":"matrix"}
+			}
+		}
+	}`))
+
+	makeInfo := func(modelName string, ratios map[string]float64) *relaycommon.RelayInfo {
+		return &relaycommon.RelayInfo{
+			OriginModelName: modelName,
+			UsingGroup:      "default",
+			PriceData:       types.PriceData{OtherRatios: ratios},
+		}
+	}
+
+	require.True(t, taskUsesPerCallPricing(makeInfo("gemini-omni", map[string]float64{"seconds": 10})))
+	require.False(t, taskUsesPerCallPricing(makeInfo("sd-2-5", map[string]float64{"seconds": 10})))
+	require.True(t, taskUsesPerCallPricing(makeInfo("kling-video", nil)))
+	require.False(t, taskUsesPerCallPricing(makeInfo("kling-video", map[string]float64{"seconds": 10})))
+}
 
 func TestMain(m *testing.M) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})

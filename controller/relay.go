@@ -157,6 +157,10 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		newAPIError = types.NewError(err, types.ErrorCodeModelPriceError)
 		return
 	}
+	if imageRequest, ok := request.(*dto.ImageRequest); ok {
+		applyConfiguredImageGroupPrice(relayInfo, imageRequest)
+		priceData = relayInfo.PriceData
+	}
 
 	// common.SetContextKey(c, constant.ContextKeyTokenCountMeta, meta)
 
@@ -242,6 +246,35 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		retryLogStr := fmt.Sprintf("重试：%s", strings.Trim(strings.Join(strings.Fields(fmt.Sprint(useChannel)), "->"), "[]"))
 		logger.LogInfo(c, retryLogStr)
 	}
+}
+
+func applyConfiguredImageGroupPrice(info *relaycommon.RelayInfo, request *dto.ImageRequest) {
+	if info == nil || request == nil {
+		return
+	}
+	candidates := []string{
+		imagePricingRawString(request.Resolution),
+		request.Size,
+		request.Model,
+		info.OriginModelName,
+	}
+	for _, resolution := range candidates {
+		if price, ok := helper.ResolveImageGroupPrice(info, resolution); ok {
+			helper.ApplyResolvedGroupPrice(info, price)
+			return
+		}
+	}
+}
+
+func imagePricingRawString(raw []byte) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var value string
+	if err := common.Unmarshal(raw, &value); err == nil {
+		return value
+	}
+	return strings.Trim(strings.TrimSpace(string(raw)), "\"")
 }
 
 var upgrader = websocket.Upgrader{

@@ -20,7 +20,7 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo) {
 	tokenName := c.GetString("token_name")
 	logContent := fmt.Sprintf("操作 %s", info.Action)
 	// 支持任务仅按次计费
-	if common.StringsContains(constant.TaskPricePatches, info.OriginModelName) {
+	if taskUsesPerCallPricing(info) {
 		logContent = fmt.Sprintf("%s，按次计费", logContent)
 	} else {
 		if len(info.PriceData.OtherRatios) > 0 {
@@ -73,6 +73,45 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo) {
 	})
 	model.UpdateUserUsedQuotaAndRequestCount(info.UserId, info.PriceData.Quota)
 	model.UpdateChannelUsedQuota(info.ChannelId, info.PriceData.Quota)
+}
+
+func taskUsesPerCallPricing(info *relaycommon.RelayInfo) bool {
+	if info == nil {
+		return false
+	}
+	if rule, ok := ratio_setting.GetTaskGroupPricingRule(info.OriginModelName, info.UsingGroup); ok {
+		mode := strings.ToLower(strings.TrimSpace(rule.BillingMode))
+		dimensionMode, _ := rule.Dimensions["mode"].(string)
+		dimensionMode = strings.ToLower(strings.TrimSpace(dimensionMode))
+		if dimensionMode == "matrix" {
+			// Matrix rows may mix per-call and per-second units. The resolved
+			// seconds ratio records which unit was selected for this request.
+			return !taskHasDurationRatio(info.PriceData.OtherRatios)
+		}
+		if mode != "" {
+			return mode == "per_call"
+		}
+		switch dimensionMode {
+		case "per_call", "flat", "resolution":
+			return true
+		case "per_second", "duration":
+			return false
+		}
+	}
+	return common.StringsContains(constant.TaskPricePatches, info.OriginModelName)
+}
+
+func taskHasDurationRatio(ratios map[string]float64) bool {
+	for key, ratio := range ratios {
+		if ratio <= 0 {
+			continue
+		}
+		switch strings.ToLower(strings.TrimSpace(key)) {
+		case "seconds", "second", "duration", "duration_seconds":
+			return true
+		}
+	}
+	return false
 }
 
 // ---------------------------------------------------------------------------

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -182,12 +183,18 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	}
 
 	// 4. 价格计算：基础模型价格
+	// ResolveOriginTask may have restored legacy remix ratios before the price
+	// helper rebuilds PriceData. Preserve them and merge them back afterwards.
+	legacyRatios := cloneTaskRatios(info.PriceData.OtherRatios)
 	info.OriginModelName = billingModelName
 	priceData, err := helper.ModelPriceHelperPerCall(c, info)
 	if err != nil {
 		return nil, service.TaskErrorWrapper(err, "model_price_error", http.StatusBadRequest)
 	}
 	info.PriceData = priceData
+	for key, ratio := range legacyRatios {
+		info.PriceData.AddOtherRatio(key, ratio)
+	}
 
 	// 5. 计费估算：让适配器根据用户请求提供 OtherRatios（时长、分辨率等）
 	//    必须在 ModelPriceHelperPerCall 之后调用（它会重建 PriceData）。
@@ -197,28 +204,28 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 			info.PriceData.AddOtherRatio(k, v)
 		}
 	}
-	if resolution := taskBillingResolution(c); resolution != "" {
-		helper.AddTaskGroupResolutionRatio(info, resolution)
-	}
-
 	// The official Doubao create routes may be relayed through an OpenAI/LiteLLM
 	// channel, so provider-specific adaptors cannot reliably enforce video
-	// duration billing. Apply the minimum at the public-route boundary.
+	// duration billing. Supply normalized duration as a legacy request fact; an
+	// exact Option pricing rule still has final authority over whether it applies.
 	enforceDoubaoOfficialDurationBilling(c, info)
 
-	// 6. 将 OtherRatios 应用到基础额度
-	//    对“固定按次”分组，不应用 seconds/size 等倍率，避免与分组计费模式冲突。
-	forceApplyTaskOtherRatios := c.GetBool("force_apply_task_other_ratios")
-	hasTaskGroupPricingDimensions := helper.HasTaskGroupPricingDimensions(info)
-	shouldApplyTaskOtherRatios := forceApplyTaskOtherRatios || helper.ShouldApplyTaskOtherRatios(info)
-	hasTaskGroupPricingRule := helper.HasTaskGroupPricingRule(info)
-	if common.StringsContains(constant.TaskPricePatches, modelName) && !forceApplyTaskOtherRatios && !hasTaskGroupPricingRule && !hasTaskGroupPricingDimensions {
-		shouldApplyTaskOtherRatios = false
-	}
-	if shouldApplyTaskOtherRatios {
-		for _, ra := range info.PriceData.OtherRatios {
-			if ra != 1.0 {
-				info.PriceData.Quota = int(float64(info.PriceData.Quota) * ra)
+	// 6. Exact model+group Option rules are authoritative. Adaptors only provide
+	// request facts used to select configured dimensions. Historical ratios are
+	// applied only when no usable exact rule exists.
+	legacyRatios = cloneTaskRatios(info.PriceData.OtherRatios)
+	pricingDecision := helper.ResolveTaskGroupPricing(info, buildTaskPricingInput(c, info, legacyRatios), legacyRatios)
+	configuredPricingApplied := pricingDecision.Applied
+	if configuredPricingApplied {
+		helper.ApplyTaskPricingDecision(info, pricingDecision)
+	} else {
+		info.PriceData.OtherRatios = legacyRatios
+		shouldApplyTaskOtherRatios := !common.StringsContains(constant.TaskPricePatches, modelName)
+		if shouldApplyTaskOtherRatios {
+			for _, ra := range info.PriceData.OtherRatios {
+				if ra != 1.0 {
+					info.PriceData.Quota = int(float64(info.PriceData.Quota) * ra)
+				}
 			}
 		}
 	}
@@ -263,11 +270,13 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 
 	// 11. 提交后计费调整：让适配器根据上游实际返回调整 OtherRatios
 	finalQuota := info.PriceData.Quota
-	if adjustedRatios := adaptor.AdjustBillingOnSubmit(info, taskData); len(adjustedRatios) > 0 {
-		// 基于调整后的 ratios 重新计算 quota
-		finalQuota = recalcQuotaFromRatios(info, adjustedRatios)
-		info.PriceData.OtherRatios = adjustedRatios
-		info.PriceData.Quota = finalQuota
+	if !configuredPricingApplied {
+		if adjustedRatios := adaptor.AdjustBillingOnSubmit(info, taskData); len(adjustedRatios) > 0 {
+			// 基于调整后的 ratios 重新计算 quota
+			finalQuota = recalcQuotaFromRatios(info, adjustedRatios)
+			info.PriceData.OtherRatios = adjustedRatios
+			info.PriceData.Quota = finalQuota
+		}
 	}
 
 	return &TaskSubmitResult{
@@ -295,7 +304,6 @@ func enforceDoubaoOfficialDurationBilling(c *gin.Context, info *relaycommon.Rela
 		info.PriceData.OtherRatios = map[string]float64{}
 	}
 	info.PriceData.OtherRatios["seconds"] = normalizeOfficialVideoBillingSeconds(req.Duration, req.Seconds)
-	c.Set("force_apply_task_other_ratios", true)
 }
 
 func normalizeOfficialVideoBillingSeconds(duration int, seconds string) float64 {
@@ -305,10 +313,181 @@ func normalizeOfficialVideoBillingSeconds(duration int, seconds string) float64 
 			resolved = parsed
 		}
 	}
+	if math.IsNaN(resolved) || math.IsInf(resolved, 0) {
+		return 4
+	}
 	if resolved < 4 {
 		return 4
 	}
 	return resolved
+}
+
+func cloneTaskRatios(input map[string]float64) map[string]float64 {
+	out := make(map[string]float64, len(input))
+	for key, ratio := range input {
+		if ratio > 0 && !math.IsNaN(ratio) && !math.IsInf(ratio, 0) {
+			out[key] = ratio
+		}
+	}
+	return out
+}
+
+func buildTaskPricingInput(c *gin.Context, info *relaycommon.RelayInfo, ratios map[string]float64) helper.TaskPricingInput {
+	input := helper.TaskPricingInput{}
+	if info != nil {
+		if info.ChannelMeta != nil {
+			input.Model = info.UpstreamModelName
+		}
+		if strings.TrimSpace(input.Model) == "" {
+			input.Model = info.OriginModelName
+		}
+	}
+	if seconds := ratios["seconds"]; seconds > 0 {
+		input.Duration = seconds
+	}
+	input.Resolution = taskBillingResolution(c)
+	if input.Resolution == "" {
+		for key := range ratios {
+			if strings.HasPrefix(strings.ToLower(strings.TrimSpace(key)), "resolution-") {
+				input.Resolution = strings.TrimPrefix(strings.ToLower(strings.TrimSpace(key)), "resolution-")
+				break
+			}
+		}
+	}
+
+	req, err := relaycommon.GetTaskRequest(c)
+	if err != nil {
+		return input
+	}
+	if input.Duration <= 0 {
+		input.Duration = taskPricingRequestDuration(req)
+	}
+	rawReq := map[string]any{}
+	_ = common.UnmarshalBodyReusable(c, &rawReq)
+	input.Model = firstTaskPricingString(
+		taskBillingMapString(req.Metadata, "model_name"),
+		taskBillingMapString(req.Metadata, "model"),
+		taskBillingMapString(req.Parameters, "model_name"),
+		taskBillingMapString(req.Parameters, "model"),
+		taskBillingString(rawReq["model_name"]),
+		input.Model,
+	)
+	input.Mode = firstTaskPricingString(
+		taskBillingMapString(req.Metadata, "mode"),
+		taskBillingMapString(req.Parameters, "mode"),
+		req.Mode,
+		taskBillingString(rawReq["mode"]),
+	)
+	input.Sound = firstTaskPricingBool(
+		taskPricingMapValue(req.Parameters, "sound"),
+		taskPricingMapValue(req.Parameters, "audio_generation"),
+		taskPricingMapValue(req.Parameters, "generate_audio"),
+		taskPricingMapValue(req.Metadata, "sound"),
+		taskPricingMapValue(req.Metadata, "audio_generation"),
+		taskPricingMapValue(req.Metadata, "generate_audio"),
+		rawReq["sound"],
+		rawReq["audio_generation"],
+		rawReq["generate_audio"],
+	)
+	input.Voice = taskPricingHasItems(req.Parameters, "voice_list") ||
+		taskPricingHasItems(req.Metadata, "voice_list") ||
+		taskPricingHasItems(rawReq, "voice_list")
+	if input.Voice && !strings.Contains(strings.ToLower(req.Prompt), "<<<voice_") {
+		input.Voice = false
+	}
+	return input
+}
+
+func taskPricingRequestDuration(req relaycommon.TaskSubmitReq) float64 {
+	if strings.TrimSpace(req.Seconds) != "" {
+		if value, err := strconv.ParseFloat(strings.TrimSpace(req.Seconds), 64); err == nil && value > 0 {
+			return value
+		}
+	}
+	if req.Duration > 0 {
+		return float64(req.Duration)
+	}
+	for _, values := range []map[string]any{req.Parameters, req.Metadata} {
+		for _, key := range []string{"duration", "seconds", "duration_seconds"} {
+			if value := taskPricingFloat(taskPricingMapValue(values, key)); value > 0 {
+				return value
+			}
+		}
+	}
+	return 0
+}
+
+func taskPricingMapValue(values map[string]any, key string) any {
+	if values == nil {
+		return nil
+	}
+	return values[key]
+}
+
+func taskPricingFloat(value any) float64 {
+	switch typed := value.(type) {
+	case float64:
+		return typed
+	case float32:
+		return float64(typed)
+	case int:
+		return float64(typed)
+	case int64:
+		return float64(typed)
+	case string:
+		parsed, _ := strconv.ParseFloat(strings.TrimSpace(typed), 64)
+		return parsed
+	default:
+		return 0
+	}
+}
+
+func firstTaskPricingString(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func firstTaskPricingBool(values ...any) bool {
+	for _, value := range values {
+		switch typed := value.(type) {
+		case bool:
+			if typed {
+				return true
+			}
+		case string:
+			text := strings.ToLower(strings.TrimSpace(typed))
+			if text == "true" || text == "1" || text == "yes" || text == "on" || text == "enabled" {
+				return true
+			}
+		case float64:
+			if typed != 0 {
+				return true
+			}
+		case int:
+			if typed != 0 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func taskPricingHasItems(values map[string]any, key string) bool {
+	value := taskPricingMapValue(values, key)
+	switch typed := value.(type) {
+	case []any:
+		return len(typed) > 0
+	case []string:
+		return len(typed) > 0
+	case string:
+		return strings.TrimSpace(typed) != ""
+	default:
+		return false
+	}
 }
 
 // recalcQuotaFromRatios 根据 adjustedRatios 重新计算 quota。

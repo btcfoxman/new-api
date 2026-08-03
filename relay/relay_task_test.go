@@ -2,10 +2,16 @@ package relay
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/types"
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
 
@@ -25,6 +31,117 @@ func TestNormalizeOfficialVideoBillingSecondsEnforcesMinimum(t *testing.T) {
 	require.Equal(t, float64(4), normalizeOfficialVideoBillingSeconds(0, "3"))
 	require.Equal(t, float64(8), normalizeOfficialVideoBillingSeconds(8, ""))
 	require.Equal(t, float64(12), normalizeOfficialVideoBillingSeconds(0, "12"))
+	require.Equal(t, float64(4), normalizeOfficialVideoBillingSeconds(0, "NaN"))
+	require.Equal(t, float64(4), normalizeOfficialVideoBillingSeconds(0, "+Inf"))
+}
+
+func TestOfficialVideoEndpointSuppliesDurationWithoutForcingPricing(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, tc := range []struct {
+		path            string
+		expectsDuration bool
+	}{
+		{path: "/api/v3/contents/generations/tasks", expectsDuration: true},
+		{path: "/oapi/v3/contents/generations/tasks", expectsDuration: true},
+		{path: "/v1/videos", expectsDuration: false},
+		{path: "/v1/video/generations", expectsDuration: false},
+	} {
+		t.Run(tc.path, func(t *testing.T) {
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodPost, tc.path, strings.NewReader(`{
+				"model":"gemini-omni",
+				"duration":10
+			}`))
+			c.Set("task_request", relaycommon.TaskSubmitReq{Model: "gemini-omni", Duration: 10})
+			info := &relaycommon.RelayInfo{PriceData: types.PriceData{OtherRatios: map[string]float64{}}}
+
+			enforceDoubaoOfficialDurationBilling(c, info)
+
+			if tc.expectsDuration {
+				require.Equal(t, float64(10), info.PriceData.OtherRatios["seconds"])
+			} else {
+				require.NotContains(t, info.PriceData.OtherRatios, "seconds")
+			}
+			require.False(t, c.GetBool("force_apply_task_other_ratios"))
+		})
+	}
+}
+
+func TestBuildTaskPricingInputNormalizesAllMatrixSelectors(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/kling/v1/videos/text2video", strings.NewReader(`{
+		"model":"kling-v3",
+		"prompt":"scene <<<voice_1>>>",
+		"duration":10,
+		"size":"1280x720",
+		"mode":"pro",
+		"metadata":{
+			"sound":"on",
+			"voice_list":["voice_1"]
+		}
+	}`))
+	c.Set("task_request", relaycommon.TaskSubmitReq{
+		Model:    "kling-v3",
+		Prompt:   "scene <<<voice_1>>>",
+		Duration: 10,
+		Size:     "1280x720",
+		Mode:     "pro",
+		Metadata: map[string]any{
+			"sound":      "on",
+			"voice_list": []any{"voice_1"},
+		},
+	})
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "kling-v3",
+		ChannelMeta: &relaycommon.ChannelMeta{
+			UpstreamModelName: "kling-v3",
+		},
+	}
+
+	input := buildTaskPricingInput(c, info, map[string]float64{"seconds": 10})
+
+	require.Equal(t, "kling-v3", input.Model)
+	require.Equal(t, float64(10), input.Duration)
+	require.Equal(t, "720p", input.Resolution)
+	require.Equal(t, "pro", input.Mode)
+	require.True(t, input.Sound)
+	require.True(t, input.Voice)
+}
+
+func TestBuildTaskPricingInputUsesKlingModelNameAndMetadataMode(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(`{
+		"model":"kling-video",
+		"model_name":"kling-v3",
+		"mode":"t2v",
+		"duration":10,
+		"metadata":{"model_name":"kling-v3","mode":"pro","sound":"on"}
+	}`))
+	c.Set("task_request", relaycommon.TaskSubmitReq{
+		Model:    "kling-video",
+		Mode:     "t2v",
+		Duration: 10,
+		Metadata: map[string]any{
+			"model_name": "kling-v3",
+			"mode":       "pro",
+			"sound":      "on",
+		},
+	})
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "kling-video",
+		ChannelMeta: &relaycommon.ChannelMeta{
+			UpstreamModelName: "kling-video",
+		},
+	}
+
+	input := buildTaskPricingInput(c, info, nil)
+
+	require.Equal(t, "kling-v3", input.Model)
+	require.Equal(t, "pro", input.Mode)
+	require.Equal(t, float64(10), input.Duration)
+	require.True(t, input.Sound)
 }
 
 func TestBuildAliOfficialTaskResponseCopiesTopLevelVideoURLToOutput(t *testing.T) {

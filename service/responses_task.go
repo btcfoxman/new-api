@@ -419,7 +419,7 @@ func logResponsesTaskConsumption(c *gin.Context, task *model.Task, info *relayco
 	}
 
 	logContent := fmt.Sprintf("操作 %s", task.Action)
-	if common.StringsContains(constant.TaskPricePatches, info.OriginModelName) || info.PriceData.UsePrice {
+	if taskUsesPerCallPricing(info) {
 		logContent = fmt.Sprintf("%s，按次计费", logContent)
 	} else if len(info.PriceData.OtherRatios) > 0 {
 		var contents []string

@@ -62,7 +62,13 @@ const ModelPricingTable = ({
   const getGroupRule = (group) => {
     const ruleMap = modelData?.group_pricing_rule;
     if (!ruleMap || typeof ruleMap !== 'object') return null;
-    return ruleMap[String(group || '').trim().toLowerCase()] || null;
+    return (
+      ruleMap[
+        String(group || '')
+          .trim()
+          .toLowerCase()
+      ] || null
+    );
   };
 
   const getMatrixConfig = (group) => {
@@ -82,15 +88,18 @@ const ModelPricingTable = ({
     if (!dimensions || typeof dimensions !== 'object') return null;
     if (dimensions.mode === 'matrix') return null;
     const hasResolution =
-      dimensions.mode === 'resolution' &&
+      (dimensions.mode === 'resolution' || !dimensions.mode) &&
       dimensions.resolution_prices &&
       typeof dimensions.resolution_prices === 'object' &&
       Object.keys(dimensions.resolution_prices).length > 0;
     const hasDuration =
-      dimensions.mode === 'duration' &&
-      dimensions.duration_prices &&
-      typeof dimensions.duration_prices === 'object' &&
-      Object.keys(dimensions.duration_prices).length > 0;
+      (dimensions.mode === 'duration' || !dimensions.mode) &&
+      ((dimensions.duration_prices &&
+        typeof dimensions.duration_prices === 'object' &&
+        Object.keys(dimensions.duration_prices).length > 0) ||
+        (dimensions.duration_points &&
+          typeof dimensions.duration_points === 'object' &&
+          Object.keys(dimensions.duration_points).length > 0));
     if (!hasResolution && !hasDuration) return null;
     return dimensions;
   };
@@ -147,7 +156,9 @@ const ModelPricingTable = ({
       });
       record.price_text = formatMatrixPrice(
         matrix.prices[index],
-        Array.isArray(matrix.price_units) ? matrix.price_units[index] : 'per_call',
+        Array.isArray(matrix.price_units)
+          ? matrix.price_units[index]
+          : 'per_call',
         ratioValue,
       );
       return record;
@@ -171,7 +182,10 @@ const ModelPricingTable = ({
     const dimensions = getDimensionConfig(group);
     if (!dimensions) return null;
 
-    if (dimensions.mode === 'resolution') {
+    if (
+      dimensions.mode === 'resolution' ||
+      (!dimensions.mode && dimensions.resolution_prices)
+    ) {
       const rows = Object.entries(dimensions.resolution_prices || {}).map(
         ([resolution, price]) => ({
           key: `${group}-resolution-${resolution}`,
@@ -206,25 +220,30 @@ const ModelPricingTable = ({
       );
     }
 
-    if (dimensions.mode === 'duration') {
+    if (
+      dimensions.mode === 'duration' ||
+      (!dimensions.mode && dimensions.duration_points)
+    ) {
       const multiplierMap =
         dimensions.resolution_multiplier &&
         typeof dimensions.resolution_multiplier === 'object'
           ? dimensions.resolution_multiplier
           : {};
-      const rows = Object.entries(dimensions.duration_prices || {}).map(
-        ([duration, price]) => ({
-          key: `${group}-duration-${duration}`,
-          dimension: `${duration}s`,
-          priceText: formatDimensionPrice(price, ratioValue),
-          multiplierText:
-            Object.keys(multiplierMap).length > 0
-              ? Object.entries(multiplierMap)
-                  .map(([resolution, multiplier]) => `${resolution} x${multiplier}`)
-                  .join(' / ')
-              : '-',
-        }),
-      );
+      const durationPrices =
+        dimensions.duration_prices || dimensions.duration_points || {};
+      const rows = Object.entries(durationPrices).map(([duration, price]) => ({
+        key: `${group}-duration-${duration}`,
+        dimension: `${duration}s`,
+        priceText: formatDimensionPrice(price, ratioValue),
+        multiplierText:
+          Object.keys(multiplierMap).length > 0
+            ? Object.entries(multiplierMap)
+                .map(
+                  ([resolution, multiplier]) => `${resolution} x${multiplier}`,
+                )
+                .join(' / ')
+            : '-',
+      }));
       return (
         <div className='mt-3' style={{ fontSize: 10 }}>
           <Table
@@ -413,7 +432,9 @@ const ModelPricingTable = ({
                 {g}
                 {t('分组')}
               </Tag>
-              {idx < autoChain.length - 1 && <span className='text-sm'>-&gt;</span>}
+              {idx < autoChain.length - 1 && (
+                <span className='text-sm'>-&gt;</span>
+              )}
             </React.Fragment>
           ))}
         </div>
@@ -424,4 +445,3 @@ const ModelPricingTable = ({
 };
 
 export default ModelPricingTable;
-
