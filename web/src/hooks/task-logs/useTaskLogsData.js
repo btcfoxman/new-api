@@ -69,10 +69,6 @@ export const useTaskLogsData = () => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalContent, setModalContent] = useState('');
 
-  // 新增：视频预览弹窗状态
-  const [isVideoModalOpen, setIsVideoModalOpen] = useState(false);
-  const [videoUrl, setVideoUrl] = useState('');
-
   // Audio preview modal state
   const [isAudioModalOpen, setIsAudioModalOpen] = useState(false);
   const [audioClips, setAudioClips] = useState([]);
@@ -89,6 +85,8 @@ export const useTaskLogsData = () => {
   const formInitValues = {
     channel_id: '',
     task_id: '',
+    user: '',
+    model_name: '',
     dateRange: [
       timestamp2string(zeroNow.getTime() / 1000),
       timestamp2string(now.getTime() / 1000 + 3600),
@@ -208,6 +206,8 @@ export const useTaskLogsData = () => {
     return {
       channel_id: formValues.channel_id || '',
       task_id: formValues.task_id || '',
+      user: formValues.user || '',
+      model_name: formValues.model_name || '',
       start_timestamp,
       end_timestamp,
     };
@@ -234,14 +234,31 @@ export const useTaskLogsData = () => {
   // Load logs function
   const loadLogs = async (page = 1, size = pageSize) => {
     setLoading(true);
-    const { channel_id, task_id, start_timestamp, end_timestamp } =
-      getFormValues();
+    const {
+      channel_id,
+      task_id,
+      user,
+      model_name,
+      start_timestamp,
+      end_timestamp,
+    } = getFormValues();
     let localStartTimestamp = parseInt(Date.parse(start_timestamp) / 1000);
     let localEndTimestamp = parseInt(Date.parse(end_timestamp) / 1000);
-    let url = isAdminUser
-      ? `/api/task/?p=${page}&page_size=${size}&channel_id=${channel_id}&task_id=${task_id}&start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}`
-      : `/api/task/self?p=${page}&page_size=${size}&task_id=${task_id}&start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}`;
-    const res = await API.get(url);
+    const params = {
+      p: page,
+      page_size: size,
+      task_id,
+      model_name,
+      start_timestamp: localStartTimestamp,
+      end_timestamp: localEndTimestamp,
+    };
+    if (isAdminUser) {
+      params.channel_id = channel_id;
+      params.user = user;
+    }
+    const res = await API.get(isAdminUser ? '/api/task/' : '/api/task/self', {
+      params,
+    });
     const { success, message, data } = res.data;
     if (success) {
       syncPageData(data);
@@ -279,12 +296,6 @@ export const useTaskLogsData = () => {
   const openContentModal = (content) => {
     setModalContent(content);
     setIsModalOpen(true);
-  };
-
-  // 新增：打开视频预览弹窗
-  const openVideoModal = (url) => {
-    setVideoUrl(url);
-    setIsVideoModalOpen(true);
   };
 
   const openAudioModal = (clips) => {
@@ -329,11 +340,6 @@ export const useTaskLogsData = () => {
     setIsModalOpen,
     modalContent,
 
-    // 新增：视频弹窗状态
-    isVideoModalOpen,
-    setIsVideoModalOpen,
-    videoUrl,
-
     // Audio preview modal
     isAudioModalOpen,
     setIsAudioModalOpen,
@@ -371,7 +377,6 @@ export const useTaskLogsData = () => {
     refresh,
     copyText,
     openContentModal,
-    openVideoModal,
     openAudioModal,
     enrichLogs,
     syncPageData,

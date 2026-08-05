@@ -74,16 +74,35 @@ const TaskLogsFilters = ({
             size='small'
           />
 
-          {/* 渠道 ID - 仅管理员可见 */}
+          <Form.Input
+            field='model_name'
+            prefix={<IconSearch />}
+            placeholder={t('模型名称')}
+            showClear
+            pure
+            size='small'
+          />
+
+          {/* 用户和渠道筛选 - 仅管理员可见 */}
           {isAdminUser && (
-            <Form.Input
-              field='channel_id'
-              prefix={<IconSearch />}
-              placeholder={t('渠道 ID')}
-              showClear
-              pure
-              size='small'
-            />
+            <>
+              <Form.Input
+                field='user'
+                prefix={<IconSearch />}
+                placeholder={`${t('用户名称')} / ID`}
+                showClear
+                pure
+                size='small'
+              />
+              <Form.Input
+                field='channel_id'
+                prefix={<IconSearch />}
+                placeholder={t('渠道 ID')}
+                showClear
+                pure
+                size='small'
+              />
+            </>
           )}
         </div>
 

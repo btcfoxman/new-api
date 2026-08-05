@@ -39,13 +39,6 @@ const TaskLogsPage = () => {
       {/* Modals */}
       <ColumnSelectorModal {...taskLogsData} />
       <ContentModal {...taskLogsData} isVideo={false} />
-      {/* 新增：视频预览弹窗 */}
-      <ContentModal
-        isModalOpen={taskLogsData.isVideoModalOpen}
-        setIsModalOpen={taskLogsData.setIsVideoModalOpen}
-        modalContent={taskLogsData.videoUrl}
-        isVideo={true}
-      />
       <AudioPreviewModal
         isModalOpen={taskLogsData.isAudioModalOpen}
         setIsModalOpen={taskLogsData.setIsAudioModalOpen}

@@ -10,6 +10,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	commonRelay "github.com/QuantumNous/new-api/relay/common"
+	"gorm.io/gorm"
 )
 
 type TaskStatus string
@@ -168,11 +169,73 @@ type SyncTaskQueryParams struct {
 	ChannelID      string
 	TaskID         string
 	UserID         string
+	Username       string
+	ModelName      string
 	Action         string
 	Status         string
 	StartTimestamp int64
 	EndTimestamp   int64
 	UserIDs        []int
+}
+
+func applyTaskModelNameFilter(query *gorm.DB, modelName string) *gorm.DB {
+	if modelName == "" {
+		return query
+	}
+	switch {
+	case common.UsingPostgreSQL:
+		return query.Where("properties ->> 'origin_model_name' = ?", modelName)
+	case common.UsingMySQL:
+		return query.Where(
+			"JSON_UNQUOTE(JSON_EXTRACT(properties, '$.origin_model_name')) = ?",
+			modelName,
+		)
+	default:
+		return query.Where("json_extract(properties, '$.origin_model_name') = ?", modelName)
+	}
+}
+
+func applySyncTaskQueryFilters(
+	query *gorm.DB,
+	queryParams SyncTaskQueryParams,
+	includeAdminFilters bool,
+) *gorm.DB {
+	if includeAdminFilters {
+		if queryParams.ChannelID != "" {
+			query = query.Where("channel_id = ?", queryParams.ChannelID)
+		}
+		if queryParams.UserID != "" {
+			query = query.Where("user_id = ?", queryParams.UserID)
+		}
+		if queryParams.Username != "" {
+			userIDs := DB.Unscoped().Model(&User{}).
+				Select("id").
+				Where("username = ?", queryParams.Username)
+			query = query.Where("user_id IN (?)", userIDs)
+		}
+		if len(queryParams.UserIDs) != 0 {
+			query = query.Where("user_id IN (?)", queryParams.UserIDs)
+		}
+	}
+	if queryParams.Platform != "" {
+		query = query.Where("platform = ?", queryParams.Platform)
+	}
+	if queryParams.TaskID != "" {
+		query = query.Where("task_id = ?", queryParams.TaskID)
+	}
+	if queryParams.Action != "" {
+		query = query.Where("action = ?", queryParams.Action)
+	}
+	if queryParams.Status != "" {
+		query = query.Where("status = ?", queryParams.Status)
+	}
+	if queryParams.StartTimestamp != 0 {
+		query = query.Where("submit_time >= ?", queryParams.StartTimestamp)
+	}
+	if queryParams.EndTimestamp != 0 {
+		query = query.Where("submit_time <= ?", queryParams.EndTimestamp)
+	}
+	return applyTaskModelNameFilter(query, queryParams.ModelName)
 }
 
 func InitTask(platform constant.TaskPlatform, relayInfo *commonRelay.RelayInfo) *Task {
@@ -218,28 +281,11 @@ func TaskGetAllUserTask(userId int, startIdx int, num int, queryParams SyncTaskQ
 	var tasks []*Task
 	var err error
 
-	// 初始化查询构建器
-	query := DB.Where("user_id = ?", userId)
-
-	if queryParams.TaskID != "" {
-		query = query.Where("task_id = ?", queryParams.TaskID)
-	}
-	if queryParams.Action != "" {
-		query = query.Where("action = ?", queryParams.Action)
-	}
-	if queryParams.Status != "" {
-		query = query.Where("status = ?", queryParams.Status)
-	}
-	if queryParams.Platform != "" {
-		query = query.Where("platform = ?", queryParams.Platform)
-	}
-	if queryParams.StartTimestamp != 0 {
-		// 假设您已将前端传来的时间戳转换为数据库所需的时间格式，并处理了时间戳的验证和解析
-		query = query.Where("submit_time >= ?", queryParams.StartTimestamp)
-	}
-	if queryParams.EndTimestamp != 0 {
-		query = query.Where("submit_time <= ?", queryParams.EndTimestamp)
-	}
+	query := applySyncTaskQueryFilters(
+		DB.Where("user_id = ?", userId),
+		queryParams,
+		false,
+	)
 
 	// 获取数据
 	err = query.Omit("channel_id").Order("id desc").Limit(num).Offset(startIdx).Find(&tasks).Error
@@ -255,37 +301,7 @@ func TaskGetAllTasks(startIdx int, num int, queryParams SyncTaskQueryParams) []*
 	var tasks []*Task
 	var err error
 
-	// 初始化查询构建器
-	query := DB
-
-	// 添加过滤条件
-	if queryParams.ChannelID != "" {
-		query = query.Where("channel_id = ?", queryParams.ChannelID)
-	}
-	if queryParams.Platform != "" {
-		query = query.Where("platform = ?", queryParams.Platform)
-	}
-	if queryParams.UserID != "" {
-		query = query.Where("user_id = ?", queryParams.UserID)
-	}
-	if len(queryParams.UserIDs) != 0 {
-		query = query.Where("user_id in (?)", queryParams.UserIDs)
-	}
-	if queryParams.TaskID != "" {
-		query = query.Where("task_id = ?", queryParams.TaskID)
-	}
-	if queryParams.Action != "" {
-		query = query.Where("action = ?", queryParams.Action)
-	}
-	if queryParams.Status != "" {
-		query = query.Where("status = ?", queryParams.Status)
-	}
-	if queryParams.StartTimestamp != 0 {
-		query = query.Where("submit_time >= ?", queryParams.StartTimestamp)
-	}
-	if queryParams.EndTimestamp != 0 {
-		query = query.Where("submit_time <= ?", queryParams.EndTimestamp)
-	}
+	query := applySyncTaskQueryFilters(DB, queryParams, true)
 
 	// 获取数据
 	err = query.Order("id desc").Limit(num).Offset(startIdx).Find(&tasks).Error
@@ -466,34 +482,7 @@ type TaskQuotaUsage struct {
 // TaskCountAllTasks returns total tasks that match the given query params (admin usage)
 func TaskCountAllTasks(queryParams SyncTaskQueryParams) int64 {
 	var total int64
-	query := DB.Model(&Task{})
-	if queryParams.ChannelID != "" {
-		query = query.Where("channel_id = ?", queryParams.ChannelID)
-	}
-	if queryParams.Platform != "" {
-		query = query.Where("platform = ?", queryParams.Platform)
-	}
-	if queryParams.UserID != "" {
-		query = query.Where("user_id = ?", queryParams.UserID)
-	}
-	if len(queryParams.UserIDs) != 0 {
-		query = query.Where("user_id in (?)", queryParams.UserIDs)
-	}
-	if queryParams.TaskID != "" {
-		query = query.Where("task_id = ?", queryParams.TaskID)
-	}
-	if queryParams.Action != "" {
-		query = query.Where("action = ?", queryParams.Action)
-	}
-	if queryParams.Status != "" {
-		query = query.Where("status = ?", queryParams.Status)
-	}
-	if queryParams.StartTimestamp != 0 {
-		query = query.Where("submit_time >= ?", queryParams.StartTimestamp)
-	}
-	if queryParams.EndTimestamp != 0 {
-		query = query.Where("submit_time <= ?", queryParams.EndTimestamp)
-	}
+	query := applySyncTaskQueryFilters(DB.Model(&Task{}), queryParams, true)
 	_ = query.Count(&total).Error
 	return total
 }
@@ -501,25 +490,11 @@ func TaskCountAllTasks(queryParams SyncTaskQueryParams) int64 {
 // TaskCountAllUserTask returns total tasks for given user
 func TaskCountAllUserTask(userId int, queryParams SyncTaskQueryParams) int64 {
 	var total int64
-	query := DB.Model(&Task{}).Where("user_id = ?", userId)
-	if queryParams.TaskID != "" {
-		query = query.Where("task_id = ?", queryParams.TaskID)
-	}
-	if queryParams.Action != "" {
-		query = query.Where("action = ?", queryParams.Action)
-	}
-	if queryParams.Status != "" {
-		query = query.Where("status = ?", queryParams.Status)
-	}
-	if queryParams.Platform != "" {
-		query = query.Where("platform = ?", queryParams.Platform)
-	}
-	if queryParams.StartTimestamp != 0 {
-		query = query.Where("submit_time >= ?", queryParams.StartTimestamp)
-	}
-	if queryParams.EndTimestamp != 0 {
-		query = query.Where("submit_time <= ?", queryParams.EndTimestamp)
-	}
+	query := applySyncTaskQueryFilters(
+		DB.Model(&Task{}).Where("user_id = ?", userId),
+		queryParams,
+		false,
+	)
 	_ = query.Count(&total).Error
 	return total
 }

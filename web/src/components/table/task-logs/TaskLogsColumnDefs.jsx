@@ -247,13 +247,34 @@ const getOriginModelName = (properties) => {
   return properties.origin_model_name || '';
 };
 
+const normalizeVideoUrl = (value) => {
+  const url =
+    typeof value === 'string'
+      ? value.trim()
+      : typeof value?.url === 'string'
+        ? value.url.trim()
+        : '';
+  return /^https?:\/\//i.test(url) ? url : '';
+};
+
+export const getTaskResultVideoUrl = (record) => {
+  let result = record?.data;
+  if (typeof result === 'string') {
+    try {
+      result = JSON.parse(result);
+    } catch {
+      return '';
+    }
+  }
+  return normalizeVideoUrl(result?.video_url);
+};
+
 export const getTaskLogsColumns = ({
   t,
   COLUMN_KEYS,
   copyText,
   openContentModal,
   isAdminUser,
-  openVideoModal,
   openAudioModal,
 }) => {
   return [
@@ -432,26 +453,12 @@ export const getTaskLogsColumns = ({
           );
         }
 
-        // 视频预览：优先使用 result_url，兼容旧数据 fail_reason 中的 URL
-        const isVideoTask =
-          record.action === TASK_ACTION_GENERATE ||
-          record.action === TASK_ACTION_TEXT_GENERATE ||
-          record.action === TASK_ACTION_FIRST_TAIL_GENERATE ||
-          record.action === TASK_ACTION_REFERENCE_GENERATE ||
-          record.action === TASK_ACTION_REMIX_GENERATE;
+        // 直接使用任务详情数据中的 data.video_url。
         const isSuccess = record.status === 'SUCCESS';
-        const resultUrl = record.result_url;
-        const hasResultUrl =
-          typeof resultUrl === 'string' && /^https?:\/\//.test(resultUrl);
-        if (isSuccess && isVideoTask && hasResultUrl) {
+        const videoUrl = getTaskResultVideoUrl(record);
+        if (isSuccess && videoUrl) {
           return (
-            <a
-              href='#'
-              onClick={(e) => {
-                e.preventDefault();
-                openVideoModal(resultUrl);
-              }}
-            >
+            <a href={videoUrl} target='_blank' rel='noopener noreferrer'>
               {t('点击预览视频')}
             </a>
           );

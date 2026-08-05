@@ -2,6 +2,7 @@ package controller
 
 import (
 	"strconv"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -19,15 +20,39 @@ func UpdateTaskBulk() {
 	service.TaskPollingLoop()
 }
 
+func adminTaskUserFilter(c *gin.Context) (userID string, username string) {
+	userID = strings.TrimSpace(c.Query("user_id"))
+	username = strings.TrimSpace(c.Query("username"))
+	user := strings.TrimSpace(c.Query("user"))
+	if user == "" {
+		return userID, username
+	}
+	if parsed, err := strconv.Atoi(user); err == nil && parsed > 0 {
+		return strconv.Itoa(parsed), ""
+	}
+	return "", user
+}
+
+func taskModelFilter(c *gin.Context) string {
+	if modelName := strings.TrimSpace(c.Query("model_name")); modelName != "" {
+		return modelName
+	}
+	return strings.TrimSpace(c.Query("model"))
+}
+
 func GetAllTask(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
 
 	startTimestamp, _ := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
 	endTimestamp, _ := strconv.ParseInt(c.Query("end_timestamp"), 10, 64)
+	userID, username := adminTaskUserFilter(c)
 	// 解析其他查询参数
 	queryParams := model.SyncTaskQueryParams{
 		Platform:       constant.TaskPlatform(c.Query("platform")),
 		TaskID:         c.Query("task_id"),
+		UserID:         userID,
+		Username:       username,
+		ModelName:      taskModelFilter(c),
 		Status:         c.Query("status"),
 		Action:         c.Query("action"),
 		StartTimestamp: startTimestamp,
@@ -53,6 +78,7 @@ func GetUserTask(c *gin.Context) {
 	queryParams := model.SyncTaskQueryParams{
 		Platform:       constant.TaskPlatform(c.Query("platform")),
 		TaskID:         c.Query("task_id"),
+		ModelName:      taskModelFilter(c),
 		Status:         c.Query("status"),
 		Action:         c.Query("action"),
 		StartTimestamp: startTimestamp,
