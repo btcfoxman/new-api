@@ -33,6 +33,19 @@ func TestActionValidateKeepsExplicitLegacySunoV5(t *testing.T) {
 	require.Equal(t, "suno-v5", resolveSunoBillingModel(request))
 }
 
+func TestActionValidateBillsExplicitSunoV6(t *testing.T) {
+	request := &dto.SunoSubmitReq{
+		Model:         "suno_music",
+		UpstreamModel: "suno-v6",
+	}
+
+	err := actionValidate(nil, request, constant.SunoActionMusic)
+
+	require.NoError(t, err)
+	require.Equal(t, "suno-v6", request.UpstreamModel)
+	require.Equal(t, "suno-v6", resolveSunoBillingModel(request))
+}
+
 func TestNormalizeSunoMusicBillingModelSupportsFreebeatAliases(t *testing.T) {
 	cases := map[string]string{
 		"suno-v5.5":             "suno-v5.5",

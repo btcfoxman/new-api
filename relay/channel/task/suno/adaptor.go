@@ -231,6 +231,8 @@ func normalizeSunoMusicBillingModel(value interface{}) string {
 		return ""
 	}
 	switch normalized {
+	case "suno-v6":
+		return "suno-v6"
 	case "suno-v5.5", "suno-v55", "suno-5.5", "suno-55", "v5.5", "v55", "chirp-fenix", "128":
 		return "suno-v5.5"
 	case "seed-audio", "seed-audio-1.0", "seed-audio-1-0", "126":
