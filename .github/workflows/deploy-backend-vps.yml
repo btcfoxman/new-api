@@ -22,6 +22,14 @@ on:
         description: "Full commit SHA of an already-pushed image; leave empty to build"
         required: false
         type: string
+      deploy_transport:
+        description: "How to transfer the image to the production host"
+        required: false
+        type: choice
+        default: registry
+        options:
+          - registry
+          - ssh_stream
 
 jobs:
   build_and_push:
@@ -187,6 +195,7 @@ jobs:
     environment: Guangzhou
     needs: build_and_push
     runs-on: ubuntu-latest
+    timeout-minutes: 50
     steps:
       - name: Compute deploy image
         id: deploy_meta
@@ -253,6 +262,64 @@ jobs:
           echo "push_acr=${{ steps.deploy_meta.outputs.push_acr }}"
           echo "push_tcr=${{ steps.deploy_meta.outputs.push_tcr }}"
 
+      - name: Log in to GHCR for image transfer
+        if: ${{ inputs.deploy_transport == 'ssh_stream' }}
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Prepare SSH key for image transfer
+        if: ${{ inputs.deploy_transport == 'ssh_stream' }}
+        shell: bash
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$DEPLOY_SSH_KEY" > "$HOME/.ssh/newapi_image_transfer"
+          chmod 600 "$HOME/.ssh/newapi_image_transfer"
+          ssh-keygen -y -f "$HOME/.ssh/newapi_image_transfer" >/dev/null
+
+      - name: Transfer GHCR image over throttled SSH
+        if: ${{ inputs.deploy_transport == 'ssh_stream' }}
+        shell: bash
+        env:
+          DEPLOY_IMAGE: ${{ steps.deploy_meta.outputs.deploy_image }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+        run: |
+          set -euo pipefail
+          if [[ "$DEPLOY_IMAGE" != ghcr.io/* ]]; then
+            echo "ssh_stream requires registry_target=ghcr" >&2
+            exit 1
+          fi
+          docker pull "$DEPLOY_IMAGE"
+          docker save "$DEPLOY_IMAGE" | gzip -1 | python3 -c '
+          import sys, time
+          rate = 2 * 1024 * 1024
+          start = time.monotonic()
+          sent = 0
+          while chunk := sys.stdin.buffer.read(65536):
+              sys.stdout.buffer.write(chunk)
+              sys.stdout.buffer.flush()
+              sent += len(chunk)
+              delay = sent / rate - (time.monotonic() - start)
+              if delay > 0:
+                  time.sleep(delay)
+          ' | timeout 30m ssh \
+            -i "$HOME/.ssh/newapi_image_transfer" \
+            -p "$DEPLOY_PORT" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=accept-new \
+            -o ServerAliveInterval=30 \
+            -o ServerAliveCountMax=4 \
+            "$DEPLOY_USER@$DEPLOY_HOST" \
+            'gzip -d | docker load'
+
       - name: Deploy on VPS via SSH
         uses: appleboy/ssh-action@v1.0.3
         env:
@@ -261,13 +328,14 @@ jobs:
           PUSH_TCR: ${{ steps.deploy_meta.outputs.push_tcr }}
           GHCR_USER: ${{ github.actor }}
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SKIP_PULL: ${{ inputs.deploy_transport == 'ssh_stream' && 'true' || 'false' }}
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           port: ${{ secrets.DEPLOY_PORT }}
           command_timeout: 45m
-          envs: DEPLOY_IMAGE,PUSH_ACR,PUSH_TCR,GHCR_USER,GHCR_TOKEN
+          envs: DEPLOY_IMAGE,PUSH_ACR,PUSH_TCR,GHCR_USER,GHCR_TOKEN,SKIP_PULL
           script: |
             set -euo pipefail
             cd "${{ secrets.DEPLOY_PATH }}"
@@ -278,7 +346,7 @@ jobs:
             if [ "${PUSH_TCR}" = "true" ] && [[ "${DEPLOY_IMAGE}" == "${{ secrets.TCR_REGISTRY }}"* ]]; then
               docker login "${{ secrets.TCR_REGISTRY }}" -u "${{ secrets.TCR_USERNAME }}" -p "${{ secrets.TCR_PASSWORD }}"
             fi
-            if [[ "${DEPLOY_IMAGE}" == ghcr.io/* ]]; then
+            if [[ "${DEPLOY_IMAGE}" == ghcr.io/* && "${SKIP_PULL}" != "true" ]]; then
               printf '%s' "${GHCR_TOKEN}" | docker login ghcr.io -u "${GHCR_USER}" --password-stdin
             fi
 
@@ -298,6 +366,10 @@ jobs:
             export IMAGE_NAMESPACE="${image_namespace}"
             export IMAGE_REPOSITORY="${image_repository}"
             export IMAGE_TAG="${image_tag}"
-            docker compose pull new-api
+            if [ "${SKIP_PULL}" = "true" ]; then
+              docker image inspect "${DEPLOY_IMAGE}" >/dev/null
+            else
+              docker compose pull new-api
+            fi
             docker compose up -d new-api
             docker compose ps
