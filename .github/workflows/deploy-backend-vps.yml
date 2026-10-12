@@ -282,7 +282,7 @@ jobs:
           chmod 600 "$HOME/.ssh/newapi_image_transfer"
           ssh-keygen -y -f "$HOME/.ssh/newapi_image_transfer" >/dev/null
 
-      - name: Transfer GHCR image over throttled SSH
+      - name: Transfer GHCR image in resumable chunks
         if: ${{ inputs.deploy_transport == 'ssh_stream' }}
         shell: bash
         env:
@@ -290,35 +290,7 @@ jobs:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
           DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
-        run: |
-          set -euo pipefail
-          if [[ "$DEPLOY_IMAGE" != ghcr.io/* ]]; then
-            echo "ssh_stream requires registry_target=ghcr" >&2
-            exit 1
-          fi
-          docker pull "$DEPLOY_IMAGE"
-          docker save "$DEPLOY_IMAGE" | gzip -1 | python3 -c '
-          import sys, time
-          rate = 2 * 1024 * 1024
-          start = time.monotonic()
-          sent = 0
-          while chunk := sys.stdin.buffer.read(65536):
-              sys.stdout.buffer.write(chunk)
-              sys.stdout.buffer.flush()
-              sent += len(chunk)
-              delay = sent / rate - (time.monotonic() - start)
-              if delay > 0:
-                  time.sleep(delay)
-          ' | timeout 30m ssh \
-            -i "$HOME/.ssh/newapi_image_transfer" \
-            -p "$DEPLOY_PORT" \
-            -o BatchMode=yes \
-            -o IdentitiesOnly=yes \
-            -o StrictHostKeyChecking=accept-new \
-            -o ServerAliveInterval=30 \
-            -o ServerAliveCountMax=4 \
-            "$DEPLOY_USER@$DEPLOY_HOST" \
-            'gzip -d | docker load'
+        run: bash .github/scripts/transfer-image-chunks.sh
 
       - name: Deploy on VPS via SSH
         uses: appleboy/ssh-action@v1.0.3
