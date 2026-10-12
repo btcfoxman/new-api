@@ -9,6 +9,15 @@ on:
       - "**/*.md"
       - ".github/workflows/deploy-frontend-pages.yml"
   workflow_dispatch:
+    inputs:
+      registry_target:
+        description: "Registry for this deployment"
+        required: false
+        type: choice
+        default: tcr
+        options:
+          - tcr
+          - ghcr
 
 jobs:
   build_and_push:
@@ -23,7 +32,7 @@ jobs:
         env:
           SHA_TAG: ${{ github.sha }}
           GH_OWNER: ${{ github.repository_owner }}
-          REGISTRY_TARGET_SECRET: ${{ secrets.REGISTRY_TARGET }}
+          REGISTRY_TARGET_SECRET: ${{ inputs.registry_target || secrets.REGISTRY_TARGET }}
           ACR_REGISTRY: ${{ secrets.ACR_REGISTRY }}
           ACR_USERNAME: ${{ secrets.ACR_USERNAME }}
           ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}
@@ -174,7 +183,7 @@ jobs:
         env:
           SHA_TAG: ${{ github.sha }}
           GH_OWNER: ${{ github.repository_owner }}
-          REGISTRY_TARGET_SECRET: ${{ secrets.REGISTRY_TARGET }}
+          REGISTRY_TARGET_SECRET: ${{ inputs.registry_target || secrets.REGISTRY_TARGET }}
           ACR_REGISTRY: ${{ secrets.ACR_REGISTRY }}
           ACR_NAMESPACE: ${{ secrets.ACR_NAMESPACE }}
           ACR_REPOSITORY: ${{ secrets.ACR_REPOSITORY }}
@@ -240,12 +249,14 @@ jobs:
           DEPLOY_IMAGE: ${{ steps.deploy_meta.outputs.deploy_image }}
           PUSH_ACR: ${{ steps.deploy_meta.outputs.push_acr }}
           PUSH_TCR: ${{ steps.deploy_meta.outputs.push_tcr }}
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           port: ${{ secrets.DEPLOY_PORT }}
-          envs: DEPLOY_IMAGE,PUSH_ACR,PUSH_TCR
+          envs: DEPLOY_IMAGE,PUSH_ACR,PUSH_TCR,GHCR_USER,GHCR_TOKEN
           script: |
             set -euo pipefail
             cd "${{ secrets.DEPLOY_PATH }}"
@@ -255,6 +266,9 @@ jobs:
             fi
             if [ "${PUSH_TCR}" = "true" ] && [[ "${DEPLOY_IMAGE}" == "${{ secrets.TCR_REGISTRY }}"* ]]; then
               docker login "${{ secrets.TCR_REGISTRY }}" -u "${{ secrets.TCR_USERNAME }}" -p "${{ secrets.TCR_PASSWORD }}"
+            fi
+            if [[ "${DEPLOY_IMAGE}" == ghcr.io/* ]]; then
+              printf '%s' "${GHCR_TOKEN}" | docker login ghcr.io -u "${GHCR_USER}" --password-stdin
             fi
 
             image_no_tag="${DEPLOY_IMAGE%:*}"
