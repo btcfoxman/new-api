@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/dto"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 )
 
@@ -16,6 +17,7 @@ type ResponsesRouteInfo struct {
 	ChannelId int    `json:"channel_id"`
 	Model     string `json:"model"`
 	Group     string `json:"group,omitempty"`
+	Image     bool   `json:"image,omitempty"`
 	CreatedAt int64  `json:"created_at"`
 }
 
@@ -39,10 +41,12 @@ func RecordResponsesRouteInfo(responseID string, info *relaycommon.RelayInfo) {
 	if responseID == "" || info == nil || info.ChannelMeta == nil || info.ChannelId <= 0 {
 		return
 	}
+	request, ok := info.Request.(*dto.OpenAIResponsesRequest)
 	routeInfo := ResponsesRouteInfo{
 		ChannelId: info.ChannelId,
 		Model:     info.OriginModelName,
 		Group:     info.UsingGroup,
+		Image:     ok && IsResponsesImageGenerationRequest(request),
 		CreatedAt: time.Now().Unix(),
 	}
 	payload, err := json.Marshal(routeInfo)

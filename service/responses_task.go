@@ -51,7 +51,7 @@ func IsResponsesAsyncTaskRequest(request *dto.OpenAIResponsesRequest) bool {
 }
 
 func IsResponsesImageGenerationRequest(request *dto.OpenAIResponsesRequest) bool {
-	return responsesRequestHasImageGeneration(request)
+	return request != nil && (responsesRequestHasImageGeneration(request) || IsLikelyImageResponsesTask(request.Model, nil))
 }
 
 func CaptureResponsesResponse(c *gin.Context, response *dto.OpenAIResponsesResponse, responseBody []byte) {
@@ -68,7 +68,9 @@ func CaptureResponsesResponse(c *gin.Context, response *dto.OpenAIResponsesRespo
 		c.Set(responsesTaskIDContextKey, ResponsesTaskID(responseID))
 	}
 	if len(responseBody) > 0 {
-		c.Set(responsesResponseBodyContextKey, append([]byte(nil), responseBody...))
+		// The client receives the original response. Persist only a compact image
+		// task projection so accidental Base64 output never enters the task table.
+		c.Set(responsesResponseBodyContextKey, compactImageResponsesTaskBody(responseBody))
 	}
 }
 
@@ -87,10 +89,54 @@ func capturedResponsesResponse(c *gin.Context) (*dto.OpenAIResponsesResponse, []
 	var responseBody []byte
 	if raw, ok := c.Get(responsesResponseBodyContextKey); ok {
 		if body, ok := raw.([]byte); ok {
-			responseBody = append([]byte(nil), body...)
+			responseBody = body
 		}
 	}
 	return response, responseBody, true
+}
+
+func compactImageResponsesTaskBody(body []byte) []byte {
+	if len(body) == 0 || !strings.Contains(string(body), `"image_generation_call"`) {
+		return body
+	}
+	var document map[string]json.RawMessage
+	if err := common.Unmarshal(body, &document); err != nil {
+		return nil
+	}
+	var outputs []map[string]json.RawMessage
+	if err := common.Unmarshal(document["output"], &outputs); err != nil {
+		return nil
+	}
+	for _, output := range outputs {
+		var outputType string
+		_ = common.Unmarshal(output["type"], &outputType)
+		if outputType != dto.ResponsesOutputTypeImageGenerationCall {
+			continue
+		}
+		delete(output, "b64_json")
+		delete(output, "image")
+		delete(output, "content")
+		if rawResult, ok := output["result"]; ok {
+			var result string
+			if err := common.Unmarshal(rawResult, &result); err == nil &&
+				(strings.HasPrefix(result, "https://") || strings.HasPrefix(result, "http://")) {
+				if len(output["url"]) == 0 {
+					output["url"] = rawResult
+				}
+			}
+			output["result"] = json.RawMessage("null")
+		}
+	}
+	encoded, err := common.Marshal(outputs)
+	if err != nil {
+		return nil
+	}
+	document["output"] = encoded
+	encoded, err = common.Marshal(document)
+	if err != nil {
+		return nil
+	}
+	return encoded
 }
 
 func responsesRequestBackground(request *dto.OpenAIResponsesRequest) bool {

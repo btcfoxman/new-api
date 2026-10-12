@@ -25,10 +25,25 @@ func OaiResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 
 	// read response body
 	var responsesResponse dto.OpenAIResponsesResponse
-	responseBody, err := io.ReadAll(resp.Body)
+	maxResponseBytes := int64(16 << 20)
+	if c.GetBool("responses_image_task") {
+		maxResponseBytes = 2 << 20
+	} else if info != nil {
+		if request, ok := info.Request.(*dto.OpenAIResponsesRequest); ok && service.IsResponsesImageGenerationRequest(request) {
+			maxResponseBytes = 2 << 20
+		}
+	}
+	responseBody, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
 	if err != nil {
 		return nil, types.NewOpenAIError(err, types.ErrorCodeReadResponseBodyFailed, http.StatusInternalServerError)
 	}
+	if int64(len(responseBody)) > maxResponseBytes {
+		if c.GetBool("responses_image_task") {
+			service.FailResponsesTaskFromFetch(c, info, c.Param("response_id"), "upstream image response exceeds the 2 MiB URL-only limit")
+		}
+		return nil, types.NewErrorWithStatusCode(fmt.Errorf("upstream Responses body exceeds the configured limit"), types.ErrorCodeBadResponseBody, http.StatusBadGateway, types.ErrOptionWithSkipRetry())
+	}
+	responseBody = service.NormalizeImageResponsesURLBody(responseBody)
 	err = common.Unmarshal(responseBody, &responsesResponse)
 	if err != nil {
 		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
@@ -49,7 +64,7 @@ func OaiResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 	if requestedResponseID := strings.TrimSpace(c.Param("response_id")); requestedResponseID != "" {
 		routeResponseID = requestedResponseID
 	}
-	if routeResponseID != "" {
+	if routeResponseID != "" && c.Request.Method == http.MethodPost {
 		service.RecordResponsesRouteInfo(routeResponseID, info)
 	}
 	service.IOCopyBytesGracefully(c, resp, responseBody)

@@ -248,9 +248,23 @@ func updateResponsesSingleTask(ctx context.Context, ch *model.Channel, responseI
 		return fmt.Errorf("fetch responses task failed for %s: %w", responseID, err)
 	}
 	defer resp.Body.Close()
-	responseBody, err := io.ReadAll(resp.Body)
+	imageTask := IsLikelyImageResponsesTask(task.Properties.OriginModelName, task.Data)
+	if routeInfo, found, routeErr := GetResponsesRouteInfo(responseID); routeErr == nil && found {
+		imageTask = imageTask || routeInfo.Image
+	}
+	maxResponseBytes := int64(16 << 20)
+	if imageTask {
+		maxResponseBytes = 2 << 20
+	}
+	responseBody, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
 	if err != nil {
 		return fmt.Errorf("readAll failed for responses task %s: %w", responseID, err)
+	}
+	if int64(len(responseBody)) > maxResponseBytes {
+		if imageTask {
+			failResponsesTaskFromPolling(ctx, task, "upstream image response exceeds the 2 MiB URL-only limit")
+		}
+		return fmt.Errorf("Responses task %s result exceeds the response size limit", responseID)
 	}
 	if resp.StatusCode != http.StatusOK {
 		if resp.StatusCode >= http.StatusBadRequest && resp.StatusCode < http.StatusInternalServerError && resp.StatusCode != http.StatusTooManyRequests {
@@ -259,6 +273,7 @@ func updateResponsesSingleTask(ctx context.Context, ch *model.Channel, responseI
 		return fmt.Errorf("Get Responses Task status code: %d, body: %s", resp.StatusCode, string(responseBody))
 	}
 
+	responseBody = NormalizeImageResponsesURLBody(responseBody)
 	var response dto.OpenAIResponsesResponse
 	if err := common.Unmarshal(responseBody, &response); err != nil {
 		return fmt.Errorf("parse responses task failed for %s: %w, body: %s", responseID, err, string(responseBody))

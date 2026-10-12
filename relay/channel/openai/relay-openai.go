@@ -560,9 +560,16 @@ func preConsumeUsage(ctx *gin.Context, info *relaycommon.RelayInfo, usage *dto.R
 func OpenaiHandlerWithUsage(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NewAPIError) {
 	defer service.CloseResponseBodyGracefully(resp)
 
-	responseBody, err := io.ReadAll(resp.Body)
+	maxResponseBytes := int64(common.GetEnvOrDefault("IMAGE_SYNC_MAX_RESPONSE_MB", 64)) << 20
+	if maxResponseBytes < 1<<20 {
+		maxResponseBytes = 1 << 20
+	}
+	responseBody, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
 	if err != nil {
 		return nil, types.NewOpenAIError(err, types.ErrorCodeReadResponseBodyFailed, http.StatusInternalServerError)
+	}
+	if int64(len(responseBody)) > maxResponseBytes {
+		return nil, types.NewErrorWithStatusCode(fmt.Errorf("upstream image response exceeds the configured limit"), types.ErrorCodeBadResponseBody, http.StatusBadGateway, types.ErrOptionWithSkipRetry())
 	}
 
 	var usageResp dto.SimpleResponse

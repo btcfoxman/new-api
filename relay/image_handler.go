@@ -105,6 +105,13 @@ func ImageHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *type
 				return newAPIError
 			}
 		}
+		if httpResp.Body != nil {
+			maxResponseMB := common.GetEnvOrDefault("IMAGE_SYNC_MAX_RESPONSE_MB", 64)
+			if maxResponseMB < 1 || maxResponseMB > 256 {
+				maxResponseMB = 64
+			}
+			httpResp.Body = http.MaxBytesReader(c.Writer, httpResp.Body, int64(maxResponseMB)<<20)
+		}
 	}
 
 	usage, newAPIError := adaptor.DoResponse(c, httpResp, info)

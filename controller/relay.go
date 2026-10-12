@@ -353,6 +353,7 @@ func RelayResponsesFetch(c *gin.Context) {
 				ChannelId: task.ChannelId,
 				Model:     modelName,
 				Group:     task.Group,
+				Image:     service.IsLikelyImageResponsesTask(modelName, task.Data),
 				CreatedAt: task.CreatedAt,
 			}
 			found = true
@@ -402,6 +403,7 @@ func RelayResponsesFetch(c *gin.Context) {
 		return
 	}
 	c.Set("relay_mode", relayconstant.RelayModeResponses)
+	c.Set("responses_image_task", routeInfo.Image)
 	addUsedChannel(c, channel.Id)
 
 	request := &dto.OpenAIResponsesRequest{Model: routeInfo.Model}
