@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -292,9 +293,13 @@ func truncateResponsesTaskText(value string) string {
 	const maxLen = 2000
 	value = strings.TrimSpace(value)
 	if len(value) <= maxLen {
-		return value
+		return strings.ToValidUTF8(value, "")
 	}
-	return value[:maxLen]
+	end := maxLen
+	for end > 0 && !utf8.RuneStart(value[end]) {
+		end--
+	}
+	return strings.ToValidUTF8(value[:end], "")
 }
 
 func responsesResultURLFromBody(responseBody []byte) string {
