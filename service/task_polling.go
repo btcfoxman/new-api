@@ -202,6 +202,22 @@ func UpdateResponsesTasks(ctx context.Context, taskChannelM map[int][]string, ta
 	return nil
 }
 
+func responsesPollSettings() (int, time.Duration) {
+	workers := common.GetEnvOrDefault("RESPONSES_POLL_WORKERS", 32)
+	if workers < 1 {
+		workers = 1
+	} else if workers > 64 {
+		workers = 64
+	}
+	intervalMs := common.GetEnvOrDefault("RESPONSES_POLL_INTERVAL_MS", 25)
+	if intervalMs < 10 {
+		intervalMs = 10
+	} else if intervalMs > 1000 {
+		intervalMs = 1000
+	}
+	return workers, time.Duration(intervalMs) * time.Millisecond
+}
+
 func updateResponsesTasks(ctx context.Context, channelID int, responseIDs []string, taskM map[string]*model.Task) error {
 	logger.LogInfo(ctx, fmt.Sprintf("Channel #%d pending responses tasks: %d", channelID, len(responseIDs)))
 	if len(responseIDs) == 0 {
@@ -225,9 +241,9 @@ func updateResponsesTasks(ctx context.Context, channelID int, responseIDs []stri
 		}
 		return fmt.Errorf("CacheGetChannel failed: %w", err)
 	}
-	const workers = 8
+	workers, interval := responsesPollSettings()
 	ids := make(chan string)
-	rate := time.NewTicker(100 * time.Millisecond)
+	rate := time.NewTicker(interval)
 	defer rate.Stop()
 	var wg sync.WaitGroup
 	for i := 0; i < workers && i < len(responseIDs); i++ {
