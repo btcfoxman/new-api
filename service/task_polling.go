@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -90,6 +91,7 @@ func sweepTimedOutTasks(ctx context.Context) {
 
 // TaskPollingLoop 主轮询循环，每 15 秒检查一次未完成的任务
 func TaskPollingLoop() {
+	responsesPollSlot := make(chan struct{}, 1)
 	for {
 		time.Sleep(time.Duration(15) * time.Second)
 		common.SysLog("任务进度轮询开始")
@@ -100,7 +102,22 @@ func TaskPollingLoop() {
 		for _, t := range allTasks {
 			platformTask[t.Platform] = append(platformTask[t.Platform], t)
 		}
-		for platform, tasks := range platformTask {
+		platforms := make([]constant.TaskPlatform, 0, len(platformTask))
+		for platform := range platformTask {
+			platforms = append(platforms, platform)
+		}
+		// A large image Responses backlog must not delay video or music updates.
+		sort.Slice(platforms, func(i, j int) bool {
+			if platforms[i] == constant.TaskPlatformResponses {
+				return false
+			}
+			if platforms[j] == constant.TaskPlatformResponses {
+				return true
+			}
+			return platforms[i] < platforms[j]
+		})
+		for _, platform := range platforms {
+			tasks := platformTask[platform]
 			if len(tasks) == 0 {
 				continue
 			}
@@ -138,6 +155,21 @@ func TaskPollingLoop() {
 				continue
 			}
 
+			if platform == constant.TaskPlatformResponses {
+				// Image polling can be much larger than every other task family.
+				// Keep one Responses sweep in flight without blocking the next
+				// video/music polling cycle.
+				select {
+				case responsesPollSlot <- struct{}{}:
+					go func(channels map[int][]string, tasks map[string]*model.Task) {
+						defer func() { <-responsesPollSlot }()
+						DispatchPlatformUpdate(constant.TaskPlatformResponses, channels, tasks)
+					}(taskChannelM, taskM)
+				default:
+					logger.LogInfo(ctx, "Responses task poll still running; skipping overlapping sweep")
+				}
+				continue
+			}
 			DispatchPlatformUpdate(platform, taskChannelM, taskM)
 		}
 		common.SysLog("任务进度轮询完成")
@@ -193,17 +225,45 @@ func updateResponsesTasks(ctx context.Context, channelID int, responseIDs []stri
 		}
 		return fmt.Errorf("CacheGetChannel failed: %w", err)
 	}
-	for _, responseID := range responseIDs {
-		task := taskM[responseID]
-		if task == nil {
-			logger.LogError(ctx, fmt.Sprintf("Responses task %s not found in taskM", responseID))
-			continue
-		}
-		if err := updateResponsesSingleTask(ctx, ch, responseID, task); err != nil {
-			logger.LogError(ctx, fmt.Sprintf("Failed to update responses task %s: %s", responseID, err.Error()))
-		}
-		time.Sleep(1 * time.Second)
+	const workers = 8
+	ids := make(chan string)
+	rate := time.NewTicker(100 * time.Millisecond)
+	defer rate.Stop()
+	var wg sync.WaitGroup
+	for i := 0; i < workers && i < len(responseIDs); i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for responseID := range ids {
+				task := taskM[responseID]
+				if task == nil {
+					logger.LogError(ctx, fmt.Sprintf("Responses task %s not found in taskM", responseID))
+					continue
+				}
+				if err := updateResponsesSingleTask(ctx, ch, responseID, task); err != nil {
+					logger.LogError(ctx, fmt.Sprintf("Failed to update responses task %s: %s", responseID, err.Error()))
+				}
+			}
+		}()
 	}
+	for _, responseID := range responseIDs {
+		select {
+		case <-rate.C:
+		case <-ctx.Done():
+			close(ids)
+			wg.Wait()
+			return ctx.Err()
+		}
+		select {
+		case ids <- responseID:
+		case <-ctx.Done():
+			close(ids)
+			wg.Wait()
+			return ctx.Err()
+		}
+	}
+	close(ids)
+	wg.Wait()
 	return nil
 }
 
@@ -234,7 +294,9 @@ func updateResponsesSingleTask(ctx context.Context, ch *model.Channel, responseI
 	if err != nil {
 		return fmt.Errorf("new proxy http client failed: %w", err)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, responsesTaskFetchURL(baseURL, responseID), nil)
+	requestCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(requestCtx, http.MethodGet, responsesTaskFetchURL(baseURL, responseID), nil)
 	if err != nil {
 		return err
 	}
