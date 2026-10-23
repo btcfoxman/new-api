@@ -8,6 +8,15 @@ import (
 )
 
 func SetVideoRouter(router *gin.Engine) {
+	klingNative := router.Group("")
+	klingNative.Use(middleware.RouteTag("relay"), controller.KlingNativeResponse())
+	{
+		for _, path := range []string{"/text-to-video/kling-4.0", "/image-to-video/kling-4.0", "/omni-video/kling-4.0"} {
+			klingNative.POST(path, middleware.KlingNativeRequestConvert(), middleware.TokenAuth(), middleware.Distribute(), controller.RelayTask)
+		}
+		klingNative.GET("/tasks", middleware.TokenAuth(), controller.KlingNativeTaskFetch)
+	}
+
 	// Video proxy: accepts either session auth (dashboard) or token auth (API clients)
 	videoProxyRouter := router.Group("/v1")
 	videoProxyRouter.Use(middleware.RouteTag("relay"))
