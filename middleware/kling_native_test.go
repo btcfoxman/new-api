@@ -25,6 +25,7 @@ func TestKlingNativeRequestNormalization(t *testing.T) {
 		{"image", "/image-to-video/kling-4.0", `{"contents":[{"type":"prompt","text":"Camera pulls back"},{"type":"first_frame","url":"https://example.com/start.png"},{"type":"last_frame","url":"https://example.com/end.png"}],"settings":{"duration":30}}`, "kling-4.0-1080p", "first_frame", 30},
 		{"omni image", "/omni-video/kling-4.0", `{"contents":[{"type":"prompt","text":"Match this style"},{"type":"refer_image","url":"https://example.com/style.png"}]}`, "kling-4.0-1080p", "reference_image", 10},
 		{"omni video", "/omni-video/kling-4.0", `{"contents":[{"type":"prompt","text":"Follow the movement"},{"type":"feature_video","url":"https://example.com/reference.mp4"}]}`, "kling-4.0-1080p", "reference_video", 10},
+		{"omni last frame", "/omni-video/kling-4.0", `{"contents":[{"type":"prompt","text":"End on this scene"},{"type":"last_frame","url":"https://example.com/end.png"}]}`, "kling-4.0-1080p", "last_frame", 10},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			router := gin.New()
@@ -33,6 +34,12 @@ func TestKlingNativeRequestNormalization(t *testing.T) {
 				require.Equal(t, "/v1/video/generations", c.Request.URL.Path)
 				var request relaycommon.TaskSubmitReq
 				require.NoError(t, common.UnmarshalBodyReusable(c, &request))
+				if tc.role == "first_frame" || tc.role == "last_frame" {
+					var normalized map[string]any
+					require.NoError(t, common.UnmarshalBodyReusable(c, &normalized))
+					require.NotContains(t, normalized, "aspect_ratio")
+					require.NotContains(t, normalized["parameters"], "aspect_ratio")
+				}
 				request.FillPromptFromContent()
 				require.Equal(t, tc.model, request.Model)
 				require.Equal(t, tc.duration, request.Duration)
@@ -61,6 +68,29 @@ func TestKlingNativeRequestNormalization(t *testing.T) {
 			request.Header.Set("Content-Type", "application/json")
 			router.ServeHTTP(recorder, request)
 			require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+		})
+	}
+}
+
+func TestKlingNativeFrameCombinationsRejectedBeforeRelay(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, body := range []string{
+		`{"contents":[{"type":"prompt","text":"test"},{"type":"first_frame","url":"https://example.com/start.png"},{"type":"refer_image","url":"https://example.com/ref.png"}]}`,
+		`{"contents":[{"type":"prompt","text":"test"},{"type":"last_frame","url":"https://example.com/end.png"},{"type":"refer_image","url":"https://example.com/ref.png"}]}`,
+		`{"contents":[{"type":"prompt","text":"test"},{"type":"first_frame","url":"https://example.com/start.png"},{"type":"feature_video","url":"https://example.com/ref.mp4"}]}`,
+		`{"contents":[{"type":"prompt","text":"test"},{"type":"last_frame","url":"https://example.com/end.png"},{"type":"feature_video","url":"https://example.com/ref.mp4"}]}`,
+		`{"contents":[{"type":"prompt","text":"test"},{"type":"first_frame","url":"https://example.com/start.png"}],"settings":{"aspect_ratio":"16:9"}}`,
+	} {
+		t.Run(body, func(t *testing.T) {
+			router := gin.New()
+			called := false
+			router.POST("/omni-video/kling-4.0", KlingNativeRequestConvert(), func(c *gin.Context) { called = true })
+			recorder := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodPost, "/omni-video/kling-4.0", bytes.NewBufferString(body))
+			request.Header.Set("Content-Type", "application/json")
+			router.ServeHTTP(recorder, request)
+			require.Equal(t, http.StatusBadRequest, recorder.Code, recorder.Body.String())
+			require.False(t, called, "unsupported frame combination reached channel selection/billing")
 		})
 	}
 }

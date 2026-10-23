@@ -234,13 +234,28 @@ func normalizeKlingNativeRequest(path string, request map[string]any) (map[strin
 	if !textOnly && len(content) == 0 {
 		return nil, fmt.Errorf("contents must include supported image or video input")
 	}
+	frameMode := counts["first_frame"] > 0 || counts["last_frame"] > 0
+	if frameMode && (counts["refer_image"] > 0 || counts["feature_video"] > 0) {
+		return nil, fmt.Errorf("first_frame/last_frame cannot be combined with refer_image/feature_video")
+	}
+	if frameMode {
+		if _, exists := settings["aspect_ratio"]; exists {
+			return nil, fmt.Errorf("settings.aspect_ratio is not supported with first_frame/last_frame; the frame image determines the aspect ratio")
+		}
+	}
 	model := "kling-4.0-1080p"
 	if resolution == "720p" {
 		model = "kling-4.0"
 	}
-	return map[string]any{
+	parameters := map[string]any{"duration": duration, "resolution": resolution}
+	normalized := map[string]any{
 		"model": model, "prompt": strings.Join(prompts, "\n"), "content": content,
 		"duration": duration, "seconds": strconv.Itoa(duration), "resolution": resolution,
-		"aspect_ratio": ratio, "parameters": map[string]any{"duration": duration, "resolution": resolution, "aspect_ratio": ratio},
-	}, nil
+		"parameters": parameters,
+	}
+	if !frameMode {
+		normalized["aspect_ratio"] = ratio
+		parameters["aspect_ratio"] = ratio
+	}
+	return normalized, nil
 }
