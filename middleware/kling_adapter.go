@@ -2,8 +2,8 @@ package middleware
 
 import (
 	"bytes"
-	"encoding/json"
 	"io"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -31,8 +31,14 @@ func KlingRequestConvert() func(c *gin.Context) {
 			"prompt":   prompt,
 			"metadata": originalReq,
 		}
+		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(model)), "kling-4.0") {
+			// Kling 4.0 uses contents/settings/options. Keep them for the
+			// downstream video adapter instead of reducing the request to metadata.
+			unifiedReq = originalReq
+			unifiedReq["model"] = model
+		}
 
-		jsonData, err := json.Marshal(unifiedReq)
+		jsonData, err := common.Marshal(unifiedReq)
 		if err != nil {
 			c.Next()
 			return
@@ -40,6 +46,7 @@ func KlingRequestConvert() func(c *gin.Context) {
 
 		// Rewrite request body and path
 		c.Request.Body = io.NopCloser(bytes.NewBuffer(jsonData))
+		c.Request.ContentLength = int64(len(jsonData))
 		c.Request.URL.Path = "/v1/video/generations"
 		if image, ok := originalReq["image"]; !ok || image == "" {
 			c.Set("action", constant.TaskActionTextGenerate)

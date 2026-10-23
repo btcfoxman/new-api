@@ -41,6 +41,28 @@ func TestConvertToRequestPayloadKeepsTopLevelContentMedia(t *testing.T) {
 	require.Equal(t, "draw this image", payload.Content[1].Text)
 }
 
+func TestConvertKlingFourOfficialRequest(t *testing.T) {
+	adaptor := &TaskAdaptor{}
+	req := &relaycommon.TaskSubmitReq{
+		Model: "kling-4.0", Prompt: "A product shot", Duration: 4,
+		Content: []map[string]interface{}{
+			{"type": "image_url", "image_url": "https://example.com/image.jpg"},
+			{"type": "video_url", "video_url": "https://example.com/video.mp4"},
+		},
+		Metadata: map[string]interface{}{"duration": 4, "resolution": "720p", "ratio": "16:9"},
+		Options:  map[string]interface{}{"watermark": false},
+	}
+	payload, err := adaptor.convertToRequestPayload(req)
+	require.NoError(t, err)
+	require.Equal(t, "kling-4.0", payload.Model)
+	require.Equal(t, "720p", payload.Resolution)
+	require.Equal(t, "16:9", payload.Ratio)
+	require.Equal(t, map[string]interface{}{"watermark": false}, payload.Options)
+	require.Len(t, payload.Content, 3)
+	require.Equal(t, "image_url", payload.Content[0].Type)
+	require.Equal(t, "video_url", payload.Content[1].Type)
+}
+
 func TestNormalizeDoubaoBillingSecondsEnforcesMinimum(t *testing.T) {
 	require.Equal(t, float64(4), normalizeDoubaoBillingSeconds(0, ""))
 	require.Equal(t, float64(4), normalizeDoubaoBillingSeconds(1, ""))

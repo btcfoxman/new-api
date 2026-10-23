@@ -673,6 +673,9 @@ type TaskSubmitReq struct {
 	Image          string                   `json:"image,omitempty"`
 	Images         []string                 `json:"images,omitempty"`
 	Content        []map[string]interface{} `json:"content,omitempty"`
+	Contents       []map[string]interface{} `json:"contents,omitempty"`
+	Settings       map[string]interface{}   `json:"settings,omitempty"`
+	Options        map[string]interface{}   `json:"options,omitempty"`
 	Size           string                   `json:"size,omitempty"`
 	Duration       int                      `json:"duration,omitempty"`
 	Seconds        string                   `json:"seconds,omitempty"`
@@ -686,7 +689,13 @@ func (t *TaskSubmitReq) GetPrompt() string {
 }
 
 func (t *TaskSubmitReq) FillPromptFromContent() {
-	if t == nil || strings.TrimSpace(t.Prompt) != "" {
+	if t == nil {
+		return
+	}
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(t.Model)), "kling-4.0") {
+		t.normalizeKlingContents()
+	}
+	if strings.TrimSpace(t.Prompt) != "" {
 		return
 	}
 	if prompt := extractTaskPromptFromContent(t.Content); prompt != "" {
@@ -697,6 +706,91 @@ func (t *TaskSubmitReq) FillPromptFromContent() {
 		if prompt := extractTaskPromptFromContent(t.Metadata["content"]); prompt != "" {
 			t.Prompt = prompt
 		}
+	}
+}
+
+// normalizeKlingContents accepts Kling's contents/settings/options request shape
+// while preserving the original JSON body for Sora-compatible forwarding.
+func (t *TaskSubmitReq) normalizeKlingContents() {
+	if len(t.Contents) == 0 && len(t.Settings) == 0 {
+		return
+	}
+	if t.Metadata == nil {
+		t.Metadata = make(map[string]interface{})
+	}
+	for _, key := range []string{"duration", "resolution", "aspect_ratio", "ratio", "seed", "generate_audio"} {
+		if value, ok := t.Settings[key]; ok {
+			if key == "aspect_ratio" {
+				t.Metadata["ratio"] = value
+			} else {
+				t.Metadata[key] = value
+			}
+		}
+	}
+	if audio, ok := t.Settings["audio"]; ok {
+		enabled := false
+		switch value := audio.(type) {
+		case bool:
+			enabled = value
+		case string:
+			switch strings.ToLower(strings.TrimSpace(value)) {
+			case "", "off", "false", "disabled", "disable", "none":
+				enabled = false
+			default:
+				enabled = true
+			}
+		}
+		t.Metadata["generate_audio"] = enabled
+	}
+	switch value := t.Settings["duration"].(type) {
+	case float64:
+		t.Duration = int(value)
+		t.Seconds = ""
+	case int:
+		t.Duration = value
+		t.Seconds = ""
+	case string:
+		if duration, err := strconv.Atoi(strings.TrimSpace(value)); err == nil {
+			t.Duration = duration
+			t.Seconds = ""
+		}
+	}
+	if len(t.Contents) == 0 {
+		return
+	}
+	// Contents is the native request source. Rebuild its normalized view so
+	// repeated validation does not duplicate reference media.
+	t.Content = make([]map[string]interface{}, 0, len(t.Contents))
+	for _, original := range t.Contents {
+		item := make(map[string]interface{}, len(original)+2)
+		for key, value := range original {
+			item[key] = value
+		}
+		kind, _ := item["type"].(string)
+		kind = strings.ReplaceAll(strings.ToLower(strings.TrimSpace(kind)), "-", "_")
+		switch kind {
+		case "prompt", "text":
+			item["type"] = "text"
+		case "image", "reference_image", "first_frame", "last_frame":
+			item["type"] = "image_url"
+			if kind == "first_frame" || kind == "last_frame" {
+				item["role"] = kind
+			}
+			if url, ok := item["url"]; ok {
+				item["image_url"] = url
+			}
+		case "video", "reference_video":
+			item["type"] = "video_url"
+			if url, ok := item["url"]; ok {
+				item["video_url"] = url
+			}
+		case "audio", "reference_audio":
+			item["type"] = "audio_url"
+			if url, ok := item["url"]; ok {
+				item["audio_url"] = url
+			}
+		}
+		t.Content = append(t.Content, item)
 	}
 }
 
