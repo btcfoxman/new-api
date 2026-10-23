@@ -3,9 +3,57 @@ package doubao
 import (
 	"testing"
 
+	"github.com/QuantumNous/new-api/common"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/stretchr/testify/require"
 )
+
+func TestKlingToolSurvivesOfficialRequestConversion(t *testing.T) {
+	for _, tool := range []string{"omni_ref_video", "image_to_video", "text_to_video", ""} {
+		t.Run(tool, func(t *testing.T) {
+			body := map[string]any{"model": "kling-4.0", "prompt": "A product shot"}
+			if tool != "" {
+				body["tool"] = tool
+			}
+			encoded, err := common.Marshal(body)
+			require.NoError(t, err)
+			var request relaycommon.TaskSubmitReq
+			require.NoError(t, common.Unmarshal(encoded, &request))
+			payload, err := (&TaskAdaptor{}).convertToRequestPayload(&request)
+			require.NoError(t, err)
+			encoded, err = common.Marshal(payload)
+			require.NoError(t, err)
+			var forwarded map[string]any
+			require.NoError(t, common.Unmarshal(encoded, &forwarded))
+			if tool == "" {
+				require.Nil(t, request.Tool)
+				require.NotContains(t, forwarded, "tool", "default requests must retain Omni selection downstream")
+			} else {
+				require.Equal(t, tool, forwarded["tool"])
+			}
+		})
+	}
+	tool := "image_to_video"
+	payload, err := (&TaskAdaptor{}).convertToRequestPayload(&relaycommon.TaskSubmitReq{
+		Model: "doubao-seedance-2-0", Prompt: "A product shot", Tool: &tool,
+	})
+	require.NoError(t, err)
+	require.Nil(t, payload.Tool, "Kling CLI controls must not be added to official non-Kling requests")
+}
+
+func TestKlingModesSurviveOfficialRequestConversion(t *testing.T) {
+	for _, mode := range []string{"t2v", "i2v", "i2v_first_last", "reference_images", "reference_material"} {
+		payload, err := (&TaskAdaptor{}).convertToRequestPayload(&relaycommon.TaskSubmitReq{
+			Model: "kling-4.0", Prompt: "A product shot", Mode: mode,
+		})
+		require.NoError(t, err)
+		encoded, err := common.Marshal(payload)
+		require.NoError(t, err)
+		var forwarded map[string]any
+		require.NoError(t, common.Unmarshal(encoded, &forwarded))
+		require.Equal(t, mode, forwarded["mode"])
+	}
+}
 
 func TestConvertToRequestPayloadKeepsTopLevelContentMedia(t *testing.T) {
 	adaptor := &TaskAdaptor{}

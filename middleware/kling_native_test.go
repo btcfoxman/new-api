@@ -28,6 +28,12 @@ func TestKlingNativeRequestNormalization(t *testing.T) {
 		{"omni last frame", "/omni-video/kling-4.0", `{"contents":[{"type":"prompt","text":"End on this scene"},{"type":"last_frame","url":"https://example.com/end.png"}]}`, "kling-4.0-1080p", "last_frame", 10},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			expectedTool := "omni_ref_video"
+			if tc.path == "/image-to-video/kling-4.0" {
+				expectedTool = "image_to_video"
+			} else if tc.path == "/text-to-video/kling-4.0" {
+				expectedTool = "text_to_video"
+			}
 			router := gin.New()
 			router.POST(tc.path, KlingNativeRequestConvert(), func(c *gin.Context) {
 				defer common.CleanupBodyStorage(c)
@@ -42,6 +48,8 @@ func TestKlingNativeRequestNormalization(t *testing.T) {
 				}
 				request.FillPromptFromContent()
 				require.Equal(t, tc.model, request.Model)
+				require.NotNil(t, request.Tool)
+				require.Equal(t, expectedTool, *request.Tool)
 				require.Equal(t, tc.duration, request.Duration)
 				require.NotEmpty(t, request.Prompt)
 				if tc.role != "" {
@@ -59,6 +67,8 @@ func TestKlingNativeRequestNormalization(t *testing.T) {
 				var forwarded map[string]any
 				require.NoError(t, common.Unmarshal(encoded, &forwarded))
 				require.Equal(t, request.Model, forwarded["model"])
+				require.Equal(t, expectedTool, forwarded["tool"])
+				require.NotContains(t, forwarded, "mode", "native tools must retain their legacy capability semantics")
 				require.Contains(t, forwarded, "resolution")
 				require.NotContains(t, forwarded, "contents")
 				c.Status(http.StatusOK)

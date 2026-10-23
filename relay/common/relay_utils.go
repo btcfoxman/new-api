@@ -236,6 +236,9 @@ func ValidateMultipartDirect(c *gin.Context, info *RelayInfo) *dto.TaskError {
 		return createTaskError(err, "invalid_json", http.StatusBadRequest, true)
 	}
 	req.FillPromptFromContent()
+	if taskErr := validateKlingVideoMode(req); taskErr != nil {
+		return taskErr
+	}
 
 	prompt = req.Prompt
 	model = req.Model
@@ -302,6 +305,18 @@ func isKnownTaskField(field string) bool {
 	return knownFields[field]
 }
 
+func validateKlingVideoMode(req TaskSubmitReq) *dto.TaskError {
+	if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(req.Model)), "kling-4.0") || req.Mode == "" {
+		return nil
+	}
+	switch strings.ToLower(strings.TrimSpace(req.Mode)) {
+	case "t2v", "i2v", "i2v_first_last", "reference_images", "reference_material":
+		return nil
+	default:
+		return createTaskError(fmt.Errorf("Kling mode must be t2v, i2v, i2v_first_last, reference_images or reference_material"), "invalid_mode", http.StatusBadRequest, true)
+	}
+}
+
 func ValidateBasicTaskRequest(c *gin.Context, info *RelayInfo, action string) *dto.TaskError {
 	var err error
 	contentType := c.GetHeader("Content-Type")
@@ -317,6 +332,9 @@ func ValidateBasicTaskRequest(c *gin.Context, info *RelayInfo, action string) *d
 		return createTaskError(err, "invalid_request", http.StatusBadRequest, true)
 	}
 	req.FillPromptFromContent()
+	if taskErr := validateKlingVideoMode(req); taskErr != nil {
+		return taskErr
+	}
 
 	if taskErr := validatePrompt(req.Prompt); taskErr != nil {
 		return taskErr

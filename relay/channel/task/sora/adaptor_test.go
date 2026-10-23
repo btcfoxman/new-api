@@ -12,11 +12,55 @@ import (
 	"strings"
 	"testing"
 
+	gatewaycommon "github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayhelper "github.com/QuantumNous/new-api/relay/helper"
 	"github.com/gin-gonic/gin"
 )
+
+func TestKlingReferenceModesKeepExplicitFrameRoles(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, contentType := range []string{"application/json", "application/x-www-form-urlencoded"} {
+		for _, mode := range []string{"reference_images", "reference_material"} {
+			body := `{"model":"kling-4.0","prompt":"A product shot","mode":"` + mode + `","first_frame":"https://example.com/start.png","last_frame":"https://example.com/end.png","content":[{"type":"image_url","image_url":{"url":"https://example.com/start.png"},"role":"first_frame"}]}`
+			if contentType != "application/json" {
+				body = url.Values{"model": {"kling-4.0"}, "prompt": {"A product shot"}, "mode": {mode}, "first_frame": {"https://example.com/start.png"}, "last_frame": {"https://example.com/end.png"}}.Encode()
+			}
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(body))
+			c.Request.Header.Set("Content-Type", contentType)
+			info := &relaycommon.RelayInfo{
+				OriginModelName: "kling-4.0",
+				ChannelMeta:     &relaycommon.ChannelMeta{UpstreamModelName: "mapped-kling"},
+				TaskRelayInfo:   &relaycommon.TaskRelayInfo{},
+			}
+			forwarded, err := (&TaskAdaptor{}).BuildRequestBody(c, info)
+			if err != nil {
+				t.Fatal(err)
+			}
+			encoded, err := io.ReadAll(forwarded)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if contentType == "application/json" {
+				var value map[string]any
+				if err := gatewaycommon.Unmarshal(encoded, &value); err != nil {
+					t.Fatal(err)
+				}
+				content := value["content"].([]any)[0].(map[string]any)
+				if value["mode"] != mode || value["first_frame"] != "https://example.com/start.png" || value["last_frame"] != "https://example.com/end.png" || content["role"] != "first_frame" {
+					t.Fatalf("Kling mode/frame roles changed: %s", encoded)
+				}
+			} else {
+				value, err := url.ParseQuery(string(encoded))
+				if err != nil || value.Get("mode") != mode || value.Get("first_frame") != "https://example.com/start.png" || value.Get("last_frame") != "https://example.com/end.png" {
+					t.Fatalf("Kling mode/frame fields changed: %s err=%v", encoded, err)
+				}
+			}
+		}
+	}
+}
 
 func TestDashScopeHappyHorseRequestUsesNestedPromptForSoraChannel(t *testing.T) {
 	gin.SetMode(gin.TestMode)

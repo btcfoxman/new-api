@@ -44,6 +44,7 @@ type MediaURL struct {
 
 type requestPayload struct {
 	Model                 string                 `json:"model"`
+	Tool                  *string                `json:"tool,omitempty"`
 	Options               map[string]interface{} `json:"options,omitempty"`
 	Mode                  string                 `json:"mode,omitempty"`
 	Content               []ContentItem          `json:"content,omitempty"`
@@ -292,6 +293,7 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq) (*
 		Content: []ContentItem{},
 	}
 	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(req.Model)), "kling-4.0") {
+		r.Tool = req.Tool
 		r.Options = req.Options
 	}
 

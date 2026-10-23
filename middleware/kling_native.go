@@ -248,10 +248,16 @@ func normalizeKlingNativeRequest(path string, request map[string]any) (map[strin
 		model = "kling-4.0"
 	}
 	parameters := map[string]any{"duration": duration, "resolution": resolution}
+	tool := "omni_ref_video"
+	if imageOnly {
+		tool = "image_to_video"
+	} else if textOnly {
+		tool = "text_to_video"
+	}
 	normalized := map[string]any{
 		"model": model, "prompt": strings.Join(prompts, "\n"), "content": content,
 		"duration": duration, "seconds": strconv.Itoa(duration), "resolution": resolution,
-		"parameters": parameters,
+		"parameters": parameters, "tool": tool,
 	}
 	if !frameMode {
 		normalized["aspect_ratio"] = ratio

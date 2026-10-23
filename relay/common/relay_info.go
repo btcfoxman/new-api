@@ -669,6 +669,7 @@ type TaskRelayInfo struct {
 type TaskSubmitReq struct {
 	Prompt         string                   `json:"prompt"`
 	Model          string                   `json:"model,omitempty"`
+	Tool           *string                  `json:"tool,omitempty"`
 	Mode           string                   `json:"mode,omitempty"`
 	Image          string                   `json:"image,omitempty"`
 	Images         []string                 `json:"images,omitempty"`

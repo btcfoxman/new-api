@@ -511,6 +511,12 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 }
 
 func shouldNormalizeReferenceVideoRequest(info *relaycommon.RelayInfo) bool {
+	// Kling mode validation depends on explicit first/last-frame roles. Keep
+	// those roles intact rather than silently converting them to references.
+	if info != nil && (strings.HasPrefix(strings.ToLower(strings.TrimSpace(info.OriginModelName)), "kling-4.0") ||
+		(info.ChannelMeta != nil && strings.HasPrefix(strings.ToLower(strings.TrimSpace(info.UpstreamModelName)), "kling-4.0"))) {
+		return false
+	}
 	return info == nil || info.TaskRelayInfo == nil || info.Action != constant.TaskActionRemix
 }
 

@@ -1,10 +1,49 @@
 package common
 
 import (
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	gatewaycommon "github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
+	"github.com/gin-gonic/gin"
 )
+
+func TestKlingVideoModeValidationPreservesExplicitModes(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, mode := range []string{"", "t2v", "i2v", "i2v_first_last", "reference_images", "reference_material", "unknown_mode"} {
+		for _, direct := range []bool{false, true} {
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			encoded, err := gatewaycommon.Marshal(map[string]any{"model": "kling-4.0", "prompt": "A product shot", "mode": mode})
+			if err != nil {
+				t.Fatal(err)
+			}
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(string(encoded)))
+			c.Request.Header.Set("Content-Type", "application/json")
+			info := &RelayInfo{TaskRelayInfo: &TaskRelayInfo{}}
+			var invalid bool
+			if direct {
+				invalid = ValidateMultipartDirect(c, info) != nil
+			} else {
+				invalid = ValidateBasicTaskRequest(c, info, constant.TaskActionGenerate) != nil
+			}
+			if invalid != (mode == "unknown_mode") {
+				t.Fatalf("mode=%q direct=%v invalid=%v", mode, direct, invalid)
+			}
+			if !invalid {
+				req, err := GetTaskRequest(c)
+				if err != nil || req.Mode != mode {
+					t.Fatalf("mode lost: got=%q want=%q err=%v", req.Mode, mode, err)
+				}
+			}
+		}
+	}
+	if err := validateKlingVideoMode(TaskSubmitReq{Model: "seedance-2.0", Mode: "provider_specific"}); err != nil {
+		t.Fatalf("non-Kling mode validation changed: %v", err)
+	}
+}
 
 func TestKlingFourContentsAndSettings(t *testing.T) {
 	var req TaskSubmitReq
