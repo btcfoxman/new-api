@@ -45,6 +45,7 @@ func KlingRequestConvert() func(c *gin.Context) {
 		}
 
 		// Rewrite request body and path
+		common.CleanupBodyStorage(c)
 		c.Request.Body = io.NopCloser(bytes.NewBuffer(jsonData))
 		c.Request.ContentLength = int64(len(jsonData))
 		c.Request.URL.Path = "/v1/video/generations"

@@ -25,12 +25,17 @@ func TestKlingRequestConvertKeepsNativeAndLegacyRequests(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			router := gin.New()
 			router.POST("/kling/v1/videos/text2video", KlingRequestConvert(), func(c *gin.Context) {
+				defer common.CleanupBodyStorage(c)
 				require.Equal(t, "/v1/video/generations", c.Request.URL.Path)
 				body, err := io.ReadAll(c.Request.Body)
 				require.NoError(t, err)
 				require.Equal(t, int64(len(body)), c.Request.ContentLength)
 				var converted map[string]interface{}
-				require.NoError(t, common.Unmarshal(body, &converted))
+				// Validation and forwarding read the cached body, not only Body.
+				require.NoError(t, common.UnmarshalBodyReusable(c, &converted))
+				var rewritten map[string]interface{}
+				require.NoError(t, common.Unmarshal(body, &rewritten))
+				require.Equal(t, rewritten, converted)
 				if tc.native {
 					require.Equal(t, "kling-4.0-1080p", converted["model"])
 					require.Len(t, converted["contents"], 1)
