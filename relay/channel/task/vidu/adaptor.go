@@ -43,6 +43,7 @@ type requestPayload struct {
 	MovementAmplitude string           `json:"movement_amplitude,omitempty"`
 	Bgm               bool             `json:"bgm,omitempty"`
 	Audio             bool             `json:"audio,omitempty"`
+	AudioURLs         []string         `json:"audio_urls,omitempty"`
 	AudioType         string           `json:"audio_type,omitempty"`
 	VoiceID           string           `json:"voice_id,omitempty"`
 	IsRec             bool             `json:"is_rec,omitempty"`
@@ -134,6 +135,9 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		c.Set("task_billing_model", billingModelName)
 	}
 	c.Set("task_request", req)
+	if err := relaycommon.NormalizeViduQ4TaskRequest(c, info); err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+	}
 	return nil
 }
 
@@ -177,6 +181,9 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	req := v.(relaycommon.TaskSubmitReq)
 	rawReq := map[string]any{}
 	_ = common.UnmarshalBodyReusable(c, &rawReq)
+	if normalized, ok := c.Get(relaycommon.ViduQ4NormalizedContextKey); ok {
+		rawReq = normalized.(map[string]any)
+	}
 
 	body, err := a.convertToRequestPayload(&req, info, rawReq)
 	if err != nil {
@@ -244,6 +251,9 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 	}
 
 	ruleModelName, ruleGroupName := viduBillingRuleTarget(info)
+	if relaycommon.IsViduQ4Model(ruleModelName) {
+		return ratios
+	}
 	rule, ok := ratio_setting.GetTaskGroupPricingRule(ruleModelName, ruleGroupName)
 	if !ok || rule.BasePrice == nil || *rule.BasePrice <= 0 {
 		return ratios
@@ -323,7 +333,7 @@ func (a *TaskAdaptor) FetchTask(baseUrl, key string, body map[string]any, proxy 
 }
 
 func (a *TaskAdaptor) GetModelList() []string {
-	return []string{"viduq3-turbo", "viduq2", "viduq1", "vidu2.0", "vidu1.5"}
+	return []string{"vidu-q4", "vidu-q4-540p", "viduq3-turbo", "viduq2", "viduq1", "vidu2.0", "vidu1.5"}
 }
 
 func (a *TaskAdaptor) GetChannelName() string {

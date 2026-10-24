@@ -303,7 +303,11 @@ func enforceDoubaoOfficialDurationBilling(c *gin.Context, info *relaycommon.Rela
 	if info.PriceData.OtherRatios == nil {
 		info.PriceData.OtherRatios = map[string]float64{}
 	}
-	info.PriceData.OtherRatios["seconds"] = normalizeOfficialVideoBillingSeconds(req.Duration, req.Seconds)
+	if relaycommon.IsViduQ4Model(req.Model) && req.Duration >= 3 && req.Duration <= 16 {
+		info.PriceData.OtherRatios["seconds"] = float64(req.Duration)
+	} else {
+		info.PriceData.OtherRatios["seconds"] = normalizeOfficialVideoBillingSeconds(req.Duration, req.Seconds)
+	}
 }
 
 func normalizeOfficialVideoBillingSeconds(duration int, seconds string) float64 {
@@ -743,6 +747,36 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 }
 
 func buildViduOfficialTaskResponse(originTask *model.Task) []byte {
+	if relaycommon.IsViduQ4Model(originTask.Properties.OriginModelName) {
+		state := "created"
+		switch originTask.Status {
+		case model.TaskStatusQueued:
+			state = "queueing"
+		case model.TaskStatusInProgress:
+			state = "processing"
+		case model.TaskStatusSuccess:
+			state = "success"
+		case model.TaskStatusFailure:
+			state = "failed"
+		}
+		creations := []any{}
+		if originTask.Status == model.TaskStatusSuccess {
+			var upstream map[string]any
+			_ = common.Unmarshal(originTask.Data, &upstream)
+			url := originTask.GetResultURL()
+			if url == "" {
+				url, _ = upstream["video_url"].(string)
+			}
+			if url == "" {
+				url, _ = upstream["url"].(string)
+			}
+			if url != "" {
+				creations = append(creations, map[string]any{"id": originTask.TaskID, "url": url})
+			}
+		}
+		data, _ := common.Marshal(map[string]any{"id": originTask.TaskID, "task_id": originTask.TaskID, "state": state, "err_code": originTask.FailReason, "creations": creations})
+		return data
+	}
 	if len(originTask.Data) > 0 {
 		var payload map[string]any
 		if err := common.Unmarshal(originTask.Data, &payload); err == nil && payload != nil {

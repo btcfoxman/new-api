@@ -159,6 +159,9 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	if err == nil && isReferenceVideoMode(taskReq.Mode) {
 		info.Action = constant.TaskActionReferenceGenerate
 	}
+	if err := relaycommon.NormalizeViduQ4TaskRequest(c, info); err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+	}
 	return nil
 }
 
@@ -404,6 +407,9 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	if strings.HasPrefix(contentType, "application/json") {
 		var bodyMap map[string]interface{}
 		if err := common.Unmarshal(cachedBody, &bodyMap); err == nil {
+			if normalized, ok := c.Get(relaycommon.ViduQ4NormalizedContextKey); ok {
+				bodyMap = normalized.(map[string]any)
+			}
 			originalModel, _ := bodyMap["model"].(string)
 			bodyMap["model"] = info.UpstreamModelName
 			if shouldNormalizeReferenceVideoRequest(info) {
@@ -740,6 +746,19 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 	// 使用公开 task_xxxx ID 返回给客户端
 	dResp.ID = info.PublicTaskID
 	dResp.TaskID = info.PublicTaskID
+	if strings.HasPrefix(c.Request.URL.Path, "/ent/v2/") && relaycommon.IsViduQ4Model(info.OriginModelName) {
+		state := "created"
+		switch strings.ToLower(strings.TrimSpace(dResp.Status)) {
+		case "running", "in_progress", "processing":
+			state = "processing"
+		case "completed", "succeeded", "success":
+			state = "success"
+		case "failed", "error", "cancelled":
+			state = "failed"
+		}
+		c.JSON(http.StatusOK, map[string]any{"task_id": info.PublicTaskID, "state": state, "model": info.OriginModelName})
+		return upstreamID, responseBody, nil
+	}
 	if isDashScopeHappyHorsePath(c.Request.URL.Path) {
 		requestID := strings.TrimSpace(dResp.RequestID)
 		if requestID == "" {
