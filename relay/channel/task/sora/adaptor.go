@@ -53,6 +53,7 @@ type responseTask struct {
 	ExpiresAt          int64  `json:"expires_at,omitempty"`
 	Seconds            string `json:"seconds,omitempty"`
 	Size               string `json:"size,omitempty"`
+	VideoURL           string `json:"video_url,omitempty"`
 	RemixedFromVideoID string `json:"remixed_from_video_id,omitempty"`
 	Error              *struct {
 		Message string `json:"message"`
@@ -730,6 +731,7 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 		taskErr = service.TaskErrorWrapper(errors.Wrapf(err, "body: %s", responseBody), "unmarshal_response_body_failed", http.StatusInternalServerError)
 		return
 	}
+	dResp.VideoURL = completedPublicVideoURL(dResp.Status, dResp.VideoURL)
 
 	upstreamID := dResp.ID
 	if upstreamID == "" {
@@ -860,7 +862,10 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		taskResult.Status = model.TaskStatusInProgress
 	case "completed":
 		taskResult.Status = model.TaskStatusSuccess
-		// Url intentionally left empty — the caller constructs the proxy URL using the public task ID
+		taskResult.Url = completedPublicVideoURL(resTask.Status, resTask.VideoURL)
+		if taskResult.Url == "" && resTask.Output != nil {
+			taskResult.Url = completedPublicVideoURL(resTask.Status, resTask.Output.VideoURL)
+		}
 	case "failed", "cancelled":
 		taskResult.Status = model.TaskStatusFailure
 		if resTask.Error != nil {
@@ -882,6 +887,18 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
 	var err error
 	if data, err = sjson.SetBytes(data, "id", task.TaskID); err != nil {
 		return nil, errors.Wrap(err, "set id failed")
+	}
+	if task.Status == model.TaskStatusSuccess {
+		videoURL := completedPublicVideoURL("completed", task.GetResultURL())
+		if videoURL == "" {
+			videoURL = taskcommon.BuildProxyURL(task.TaskID)
+		}
+		data, err = sjson.SetBytes(data, "video_url", videoURL)
+	} else {
+		data, err = sjson.DeleteBytes(data, "video_url")
+	}
+	if err != nil {
+		return nil, errors.Wrap(err, "set video URL failed")
 	}
 	return data, nil
 }
