@@ -358,5 +358,5 @@ jobs:
             else
               docker compose pull new-api
             fi
-            docker compose up -d new-api
+            docker compose up -d --no-build --pull never new-api
             docker compose ps
