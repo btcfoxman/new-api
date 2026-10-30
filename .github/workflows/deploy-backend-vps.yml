@@ -411,8 +411,9 @@ jobs:
              return checksum.hexdigest()
             roots=[pathlib.Path('/app/litellm'),pathlib.Path('/app/litellm/litellm')]
             roots += [pathlib.Path(p) for p in glob.glob('/usr/local/lib/python*/site-packages/litellm')[:12]]
+            roots += [pathlib.Path(p) for p in glob.glob('/usr/lib/python*/site-packages/litellm')[:12]]
             roots += [pathlib.Path(p) for p in glob.glob('/opt/venv/lib/python*/site-packages/litellm')[:4]]
-            relative=['videos/main.py','litellm_core_utils/exception_mapping_utils.py','llms/lyapi/videos/transformation.py','proxy/video_endpoints/endpoints.py']
+            relative=['videos/main.py','litellm_core_utils/exception_mapping_utils.py','llms/lyapi/videos/transformation.py','llms/custom_httpx/llm_http_handler.py','proxy/video_endpoints/endpoints.py']
             facts=[]
             for root in roots:
              for name in relative:
@@ -422,6 +423,7 @@ jobs:
             paths=[pathlib.Path('/app/VERSION'),pathlib.Path('/app/pyproject.toml')]
             paths += [root/'_version.py' for root in roots]
             paths += [pathlib.Path(p) for p in glob.glob('/usr/local/lib/python*/site-packages/litellm-*.dist-info/METADATA')[:12]]
+            paths += [pathlib.Path(p) for p in glob.glob('/usr/lib/python*/site-packages/litellm-*.dist-info/METADATA')[:12]]
             for path in paths:
              if not path.is_file() or path.is_symlink() or path.stat().st_size>2097152:continue
              text=path.read_text(encoding='utf-8',errors='replace')
