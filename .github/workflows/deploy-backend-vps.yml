@@ -10,6 +10,11 @@ on:
       - ".github/workflows/deploy-frontend-pages.yml"
   workflow_dispatch:
     inputs:
+      readonly_probe:
+        description: "Read-only production metadata and redacted polling diagnostics; never build or deploy"
+        required: false
+        type: boolean
+        default: false
       registry_target:
         description: "Registry for this deployment"
         required: false
@@ -33,6 +38,7 @@ on:
 
 jobs:
   build_and_push:
+    if: ${{ inputs.readonly_probe != true }}
     environment: Guangzhou
     runs-on: ubuntu-latest
     steps:
@@ -204,6 +210,7 @@ jobs:
           timeout 20m docker push "$TCR_IMAGE"
 
   deploy_vps:
+    if: ${{ inputs.readonly_probe != true }}
     environment: Guangzhou
     needs: build_and_push
     runs-on: ubuntu-latest
@@ -360,3 +367,192 @@ jobs:
             fi
             docker compose up -d --no-build --pull never new-api
             docker compose ps
+
+  readonly_probe:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.readonly_probe == true }}
+    environment: Guangzhou
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    permissions:
+      contents: read
+    steps:
+      - name: Read production metadata and redacted polling facts
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          port: ${{ secrets.DEPLOY_PORT }}
+          command_timeout: 6m
+          script: |
+            python3 -I -S -B - <<'READONLY_PY'
+            """Fixed production metadata/log probe. Never import or call an application."""
+            import hashlib
+            import json
+            import os
+            import re
+            import selectors
+            import subprocess
+            import time
+
+            SINCE = '2026-10-30T17:00:00Z'
+            UNTIL = '2026-10-30T17:10:00Z'
+            TARGETS = {
+                'newapi_task_1': 'task_9ySxI4jq4TJTHKoZITazbRorCzg0eCes',
+                'newapi_task_2': 'task_MbW16Di6kzgpib1KTPoPqdfHhF6e95fC',
+                'lingya_task_1': '5618ee1eadf0413482a231eb30133df6',
+                'lingya_task_2': 'c01db8ea18b74c3c8d4e2bfe781f3316',
+            }
+            FILES = """import glob,hashlib,json,pathlib,re
+            def fingerprint(path):
+             checksum=hashlib.sha256()
+             with path.open('rb') as stream:
+              for chunk in iter(lambda:stream.read(1048576),b''):checksum.update(chunk)
+             return checksum.hexdigest()
+            roots=[pathlib.Path('/app/litellm'),pathlib.Path('/app/litellm/litellm')]
+            roots += [pathlib.Path(p) for p in glob.glob('/usr/local/lib/python*/site-packages/litellm')[:12]]
+            roots += [pathlib.Path(p) for p in glob.glob('/opt/venv/lib/python*/site-packages/litellm')[:4]]
+            relative=['videos/main.py','litellm_core_utils/exception_mapping_utils.py','llms/lyapi/videos/transformation.py','proxy/video_endpoints/endpoints.py']
+            facts=[]
+            for root in roots:
+             for name in relative:
+              path=root/name
+              if path.is_file() and not path.is_symlink():facts.append({'path':str(path),'bytes':path.stat().st_size,'sha256':fingerprint(path)})
+            versions=[]
+            paths=[pathlib.Path('/app/VERSION'),pathlib.Path('/app/pyproject.toml')]
+            paths += [root/'_version.py' for root in roots]
+            paths += [pathlib.Path(p) for p in glob.glob('/usr/local/lib/python*/site-packages/litellm-*.dist-info/METADATA')[:12]]
+            for path in paths:
+             if not path.is_file() or path.is_symlink() or path.stat().st_size>2097152:continue
+             text=path.read_text(encoding='utf-8',errors='replace')
+             match=re.search(r'(?m)^Version:\\s*([0-9][A-Za-z0-9.+_-]{0,79})$',text)
+             if match is None:match=re.search(r'''(?:__version__|version)\\s*=\\s*["']([0-9][A-Za-z0-9.+_-]{0,79})["']''',text)
+             if match is None:match=re.fullmatch(r'\\s*([0-9][A-Za-z0-9.+_-]{0,79})\\s*',text)
+             versions.append({'path':str(path),'sha256':fingerprint(path),'version':match.group(1) if match else None})
+            print(json.dumps({'source_files':facts,'version_files':versions}))
+            """
+
+
+            def capture(args, *, source=None, maximum=8 * 1024 * 1024, seconds=25):
+                assert args[0] == 'docker' and args[1] in {'ps', 'inspect', 'image', 'logs', 'exec'}
+                if args[1] == 'exec':
+                    assert args[:3] == ['docker', 'exec', '-i'] and args[4:] == ['python', '-I', '-S', '-B', '-'] and source == FILES
+                process = subprocess.Popen(args, stdin=subprocess.PIPE if source else subprocess.DEVNULL,
+                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                output = bytearray()
+                deadline = time.monotonic() + seconds
+                limited = False
+                try:
+                    if source:
+                        process.stdin.write(source.encode())
+                        process.stdin.close()
+                    with selectors.DefaultSelector() as selector:
+                        selector.register(process.stdout, selectors.EVENT_READ)
+                        while selector.get_map():
+                            if time.monotonic() >= deadline:
+                                limited = True
+                                break
+                            for key, _ in selector.select(min(0.25, max(0, deadline - time.monotonic()))):
+                                chunk = os.read(key.fileobj.fileno(), 65536)
+                                if not chunk:
+                                    selector.unregister(key.fileobj)
+                                    continue
+                                remaining = maximum - len(output)
+                                output.extend(chunk[:remaining])
+                                if len(chunk) > remaining:
+                                    limited = True
+                                    break
+                            if limited:
+                                break
+                finally:
+                    if process.poll() is None:
+                        try:
+                            process.wait(timeout=0.5 if not limited else 0)
+                        except subprocess.TimeoutExpired:
+                            # Only stop this probe's own bounded docker reader/exec client.
+                            process.kill()
+                    process.wait(timeout=3)
+                    process.stdout.close()
+                return {'returncode': process.returncode, 'bounded_or_truncated': limited,
+                        'captured_bytes': len(output), 'sha256': hashlib.sha256(output).hexdigest(), 'raw': bytes(output)}
+
+
+            def json_read(args, **kwargs):
+                result = capture(args, **kwargs)
+                if result['returncode'] or result['bounded_or_truncated']:
+                    return None
+                try:
+                    return json.loads(result['raw'])
+                except (ValueError, UnicodeError):
+                    return None
+
+
+            def image_reference(value):
+                return value if isinstance(value, str) and re.fullmatch(r'[A-Za-z0-9._:/@-]{1,512}', value) else None
+
+
+            def log_facts(name):
+                result = capture(['docker', 'logs', '--timestamps', '--since', SINCE, '--until', UNTIL, '--tail', '4000', name])
+                raw = result.pop('raw')
+                text = raw.decode('utf-8', errors='replace')
+                result.update(since=SINCE, until=UNTIL, maximum_tail_lines=4000,
+                    exact_task_marker_counts={key: text.count(value) for key, value in TARGETS.items()},
+                    text_marker_counts={key: text.lower().count(key.lower()) for key in (
+                        'Cloudflare', 'Traceback (most recent call last)', 'APIConnectionError', 'APIError',
+                        'AttributeError', 'TypeError', 'HTTPStatusError', 'InternalServerError', 'ServiceUnavailable',
+                        'JSONDecodeError', 'ReadTimeout', 'ConnectTimeout', 'retry', 'poll')},
+                    status_marker_counts={code: len(re.findall(r'(?<![0-9])' + code + r'(?![0-9])', text))
+                        for code in ('500', '502', '503', '504', '520', '521', '522', '523', '524', '530')})
+                frames = set()
+                for path, line, function in re.findall(r'''File ["'](/(?:app|usr/(?:local/)?lib)/[A-Za-z0-9_./-]{1,260}\.py)["'], line ([0-9]{1,7}), in ([A-Za-z0-9_<>.]{1,100})''', text):
+                    frames.add((path, int(line), function))
+                result['traceback_frames'] = [{'file': path, 'line': line, 'function': function} for path, line, function in sorted(frames)[:80]]
+                result['traceback_frames_truncated'] = len(frames) > 80
+                return result
+
+
+            def main():
+                listing = capture(['docker', 'ps', '--all', '--format', '{{.Names}}'], maximum=65536, seconds=10)
+                if listing['returncode'] or listing['bounded_or_truncated']:
+                    raise RuntimeError('DockerPermissionDenied' if b'permission denied' in listing['raw'].lower()
+                                       else 'ContainerDiscoveryUnavailable')
+                names = [value for value in listing['raw'].decode().splitlines()
+                         if re.fullmatch(r'(?:[A-Za-z0-9_.-]+[-_])?(?:new-api|litellm)(?:[-_][0-9]+)?', value)]
+                if not names or len(names) > 6:
+                    raise RuntimeError('ContainerSelectionNotUniqueEnough')
+                containers = []
+                for name in names:
+                    inspection = json_read(['docker', 'inspect', name], maximum=1024 * 1024, seconds=10)
+                    if not isinstance(inspection, list) or len(inspection) != 1:
+                        containers.append({'name': name, 'inspection_unavailable': True})
+                        continue
+                    value = inspection[0]
+                    state, config = value.get('State') or {}, value.get('Config') or {}
+                    image = json_read(['docker', 'image', 'inspect', value['Image']], maximum=1024 * 1024, seconds=10)
+                    image = image[0] if isinstance(image, list) and len(image) == 1 else {}
+                    labels = (image.get('Config') or {}).get('Labels') or {}
+                    revision = labels.get('org.opencontainers.image.revision')
+                    item = {'name': name, 'image': image_reference(config.get('Image')), 'image_id': image_reference(value.get('Image')),
+                        'repo_digests': [image_reference(x) for x in image.get('RepoDigests') or [] if image_reference(x)],
+                        'revision_label': revision if isinstance(revision, str) and re.fullmatch(r'[a-fA-F0-9]{7,64}', revision) else None,
+                        'status': state.get('Status'), 'running': state.get('Running'),
+                        'health': (state.get('Health') or {}).get('Status'),
+                        'mounts': [{key: mount.get(key) for key in ('Type', 'Source', 'Destination', 'RW', 'Name')}
+                            for mount in value.get('Mounts') or []], 'log_facts': log_facts(name)}
+                    if 'litellm' in name:
+                        item['python_source'] = json_read(['docker', 'exec', '-i', name, 'python', '-I', '-S', '-B', '-'], source=FILES, seconds=15)
+                    containers.append(item)
+                print(json.dumps({'probe': 'newapi-transient-poll-20261031', 'containers': containers,
+                    'raw_logs_emitted': False, 'container_environment_emitted': False, 'application_imported': False,
+                    'source_SQL_or_DB_access': False, 'generation_requests': 0, 'database_writes': 0,
+                    'restarts_pulls_builds_installs': 0}, sort_keys=True))
+
+
+            if __name__ == '__main__':
+                try:
+                    main()
+                except Exception as exc:
+                    code = str(exc) if str(exc) in {'DockerPermissionDenied', 'ContainerDiscoveryUnavailable', 'ContainerSelectionNotUniqueEnough'} else type(exc).__name__
+                    print(json.dumps({'probe_failed': True, 'error_class': code, 'raw_error_not_emitted': True}))
+                    raise SystemExit(1)
+            READONLY_PY
