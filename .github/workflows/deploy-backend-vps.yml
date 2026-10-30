@@ -10,6 +10,11 @@ on:
       - ".github/workflows/deploy-frontend-pages.yml"
   workflow_dispatch:
     inputs:
+      sealed_ci_secrets:
+        description: "Export four deployment secrets sealed to the fixed AIF production key; skip build and deployment"
+        required: false
+        type: boolean
+        default: false
       registry_target:
         description: "Registry for this deployment"
         required: false
@@ -33,6 +38,7 @@ on:
 
 jobs:
   build_and_push:
+    if: ${{ inputs.sealed_ci_secrets != true }}
     environment: Guangzhou
     runs-on: ubuntu-latest
     steps:
@@ -215,6 +221,7 @@ jobs:
           timeout 20m docker push "$TCR_IMAGE"
 
   deploy_vps:
+    if: ${{ inputs.sealed_ci_secrets != true }}
     environment: Guangzhou
     needs: build_and_push
     runs-on: ubuntu-latest
@@ -371,3 +378,84 @@ jobs:
             fi
             docker compose up -d --no-build --pull never new-api
             docker compose ps
+
+  sealed_ci_secrets:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.sealed_ci_secrets == true && github.repository == 'btcfoxman/new-api' && github.ref == 'refs/heads/diagnostic/sealed-ci-secrets-20261031' }}
+    runs-on: ubuntu-latest
+    environment: Guangzhou
+    permissions:
+      contents: read
+    timeout-minutes: 5
+    steps:
+      - name: Set up encryption runtime
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install pinned sealed-box implementation on hosted runner
+        run: python -m pip install --disable-pip-version-check PyNaCl==1.5.0
+
+      - name: Seal the four deployment secrets to the fixed AIF environment key
+        env:
+          SOURCE_DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          SOURCE_DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          SOURCE_DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+          SOURCE_DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        shell: bash
+        run: |
+          python - <<'PY'
+          import base64
+          import json
+          import os
+          from pathlib import Path
+          from nacl.public import PublicKey, SealedBox
+
+          def main():
+              names = ('DEPLOY_HOST', 'DEPLOY_USER', 'DEPLOY_PORT', 'DEPLOY_SSH_KEY')
+              public_key = base64.b64decode('nMatZoWI1/SQXbtRg6pEpnOmxsIaxECmRlg8S1LH70U=', validate=True)
+              if len(public_key) != 32:
+                  raise ValueError('invalid target key')
+              values = {name: os.environ['SOURCE_' + name] for name in names}
+              if any(not value for value in values.values()):
+                  raise ValueError('missing source secret')
+              box = SealedBox(PublicKey(public_key))
+              sealed = {name: base64.b64encode(box.encrypt(values[name].encode('utf-8'))).decode('ascii') for name in names}
+              payload = {
+                  'schema_version': 1,
+                  'key_id': '3380204578043523366',
+                  'target_repository': 'aifoxmans/litellm-gateway',
+                  'target_environment': 'production',
+                  'source_repository': 'btcfoxman/new-api',
+                  'source_environment': 'Guangzhou',
+                  'source_commit': os.environ['GITHUB_SHA'],
+                  'source_run_id': os.environ['GITHUB_RUN_ID'],
+                  'sealed_values': sealed,
+              }
+              directory = Path(os.environ['RUNNER_TEMP']) / 'sealed-ci-secrets'
+              directory.mkdir(mode=0o700, exist_ok=False)
+              destination = directory / 'sealed-ci-secrets.json'
+              descriptor = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+              with os.fdopen(descriptor, 'w', encoding='utf-8', newline='\n') as output:
+                  json.dump(payload, output, ensure_ascii=True, separators=(',', ':'))
+                  output.write('\n')
+                  output.flush()
+                  os.fsync(output.fileno())
+              directory_fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+              try:
+                  os.fsync(directory_fd)
+              finally:
+                  os.close(directory_fd)
+
+          try:
+              main()
+          except Exception:
+              raise SystemExit('Sealed deployment-secret export failed') from None
+          PY
+
+      - name: Upload ciphertext-only credentials artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sealed-ci-secrets-aif-production
+          path: ${{ runner.temp }}/sealed-ci-secrets/sealed-ci-secrets.json
+          if-no-files-found: error
+          retention-days: 1
