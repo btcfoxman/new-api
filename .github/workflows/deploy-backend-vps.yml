@@ -493,6 +493,11 @@ jobs:
                 return value if isinstance(value, str) and re.fullmatch(r'[A-Za-z0-9._:/@-]{1,512}', value) else None
 
 
+            def public_image_digest_characters(value):
+                # A public digest is not a credential; preserve it when CI masks numeric port substrings.
+                return list(value[7:]) if isinstance(value, str) and re.fullmatch(r'sha256:[0-9a-f]{64}', value) else None
+
+
             def log_facts(name):
                 result = capture(['docker', 'logs', '--timestamps', '--since', SINCE, '--until', UNTIL, '--tail', '4000', name])
                 raw = result.pop('raw')
@@ -535,6 +540,7 @@ jobs:
                     labels = (image.get('Config') or {}).get('Labels') or {}
                     revision = labels.get('org.opencontainers.image.revision')
                     item = {'name': name, 'image': image_reference(config.get('Image')), 'image_id': image_reference(value.get('Image')),
+                        'image_id_hex_characters': public_image_digest_characters(value.get('Image')),
                         'repo_digests': [image_reference(x) for x in image.get('RepoDigests') or [] if image_reference(x)],
                         'revision_label': revision if isinstance(revision, str) and re.fullmatch(r'[a-fA-F0-9]{7,64}', revision) else None,
                         'status': state.get('Status'), 'running': state.get('Running'),
