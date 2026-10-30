@@ -39,6 +39,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Set up Go validation runtime
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Verify asynchronous task polling and billing
+        env:
+          CGO_ENABLED: '1'
+        run: go test ./service ./relay/channel/task/sora ./model
+
       - name: Set image tags
         id: tags
         env:
