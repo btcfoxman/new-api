@@ -130,3 +130,11 @@ func TestSunoSubmitRequestDropsClientCredits(t *testing.T) {
 	require.NotContains(t, payload, "credits")
 	require.Equal(t, 2, resolveSunoDynamicCredits(&request, "seed-audio-1.0"))
 }
+
+func TestSeedMusicUsesIndependentPerTrackBilling(t *testing.T) {
+	duration := 60
+	request := &dto.SunoSubmitReq{Model: "suno_music", UpstreamModel: "sd-music-1.0-preview", Prompt: "Ocean", Duration: &duration}
+	require.NoError(t, actionValidate(nil, request, constant.SunoActionMusic))
+	require.Equal(t, "sd-music-1.0-preview", resolveSunoBillingModel(request))
+	require.Zero(t, resolveSunoDynamicCredits(request, resolveSunoBillingModel(request)))
+}

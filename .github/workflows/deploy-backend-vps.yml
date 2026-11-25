@@ -48,7 +48,7 @@ jobs:
       - name: Verify asynchronous task polling and billing
         env:
           CGO_ENABLED: '1'
-        run: go test ./service ./relay/channel/task/sora ./model
+        run: go test ./service ./relay/channel/task/sora ./relay/channel/task/suno ./model
 
       - name: Set image tags
         id: tags

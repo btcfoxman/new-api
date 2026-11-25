@@ -5,6 +5,7 @@ import (
 )
 
 type SunoSubmitReq struct {
+	Duration             *int                   `json:"duration,omitempty"`
 	Model                string                 `json:"model,omitempty"`
 	GptDescriptionPrompt string                 `json:"gpt_description_prompt,omitempty"`
 	Prompt               string                 `json:"prompt,omitempty"`
