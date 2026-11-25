@@ -23,6 +23,7 @@ import { copy, showSuccess } from './utils';
 import { MOBILE_BREAKPOINT } from '../hooks/common/useIsMobile';
 import { visit } from 'unist-util-visit';
 import * as LobeIcons from '@lobehub/icons';
+import SandAIIcon from '../components/common/SandAIIcon';
 import {
   OpenAI,
   Claude,
@@ -430,7 +431,7 @@ export function getLobeHubIcon(iconName, size = 14) {
   // 解析组件路径与点号链式属性
   const segments = String(iconName).split('.');
   const baseKey = segments[0];
-  const BaseIcon = LobeIcons[baseKey];
+  const BaseIcon = baseKey === 'SandAI' ? SandAIIcon : LobeIcons[baseKey];
 
   let IconComponent = undefined;
   let propStartIndex = 1;
@@ -439,7 +440,7 @@ export function getLobeHubIcon(iconName, size = 14) {
     IconComponent = BaseIcon[segments[1]];
     propStartIndex = 2;
   } else {
-    IconComponent = LobeIcons[baseKey];
+    IconComponent = BaseIcon;
     propStartIndex = 1;
   }
 
